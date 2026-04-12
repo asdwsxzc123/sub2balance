@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pending Requests - Sub2Balance Admin</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="nav">
+        <div class="nav-container">
+            <div class="text-xl font-bold">Sub2Balance Admin</div>
+            <div class="nav-links">
+                <a href="/admin-pending.html">Pending</a>
+                <a href="/admin-requests.html">All Requests</a>
+                <a href="/admin-users.html">Users</a>
+                <a href="/admin-logs.html">Logs</a>
+                <a href="#" onclick="logout()">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container" x-data="pendingRequests()" x-init="loadRequests()">
+        <div class="card">
+            <h2 class="text-xl font-bold mb-4">Pending Requests</h2>
+
+            <div x-show="loading" class="text-center py-8">Loading...</div>
+
+            <div x-show="!loading && requests.length === 0" class="text-center py-8 text-gray-500">
+                No pending requests
+            </div>
+
+            <div x-show="!loading && requests.length > 0">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>User Email</th>
+                            <th>Group</th>
+                            <th>Amount</th>
+                            <th>Submitted By</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="req in requests" :key="req.id">
+                            <tr>
+                                <td x-text="req.id"></td>
+                                <td x-text="req.user_email"></td>
+                                <td x-text="req.group_name"></td>
+                                <td x-text="formatAmount(req.conversion_amount)"></td>
+                                <td x-text="req.submitted_by_user?.email"></td>
+                                <td x-text="formatDate(req.created_at)"></td>
+                                <td>
+                                    <button @click="review(req)" class="btn btn-primary btn-sm">Review</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Review Modal -->
+        <div x-show="reviewingRequest" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" @click.self="reviewingRequest = null">
+            <div class="card max-w-2xl w-full max-h-screen overflow-y-auto">
+                <h3 class="text-lg font-bold mb-4">Review Request</h3>
+                <template x-if="reviewingRequest">
+                    <div>
+                        <div class="space-y-2 mb-4">
+                            <div><strong>User Email:</strong> <span x-text="reviewingRequest.user_email"></span></div>
+                            <div><strong>Group:</strong> <span x-text="reviewingRequest.group_name"></span></div>
+                            <div><strong>Original Amount:</strong> <span x-text="formatAmount(reviewingRequest.original_amount)"></span></div>
+                            <div><strong>Consumed Amount:</strong> <span x-text="formatAmount(reviewingRequest.consumed_amount)"></span></div>
+                            <div><strong>Conversion Amount:</strong> <span class="text-green-600 font-bold" x-text="formatAmount(reviewingRequest.conversion_amount)"></span></div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Final Amount (optional, leave empty to use conversion amount)</label>
+                            <input type="number" step="0.01" class="form-input" x-model="finalAmount">
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Review Note</label>
+                            <textarea class="form-input" rows="3" x-model="reviewNote"></textarea>
+                        </div>
+
+                        <div class="flex gap-2">
+                            <button @click="approve" class="btn btn-success" :disabled="processing">
+                                <span x-show="!processing">Approve</span>
+                                <span x-show="processing">Processing...</span>
+                            </button>
+                            <button @click="reject" class="btn btn-danger" :disabled="processing">
+                                <span x-show="!processing">Reject</span>
+                                <span x-show="processing">Processing...</span>
+                            </button>
+                            <button @click="reviewingRequest = null" class="btn">Cancel</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script>
+        if (!checkAuth() || !isAdmin()) {
+            window.location.href = '/index.html';
+        }
+
+        function pendingRequests() {
+            return {
+                requests: [],
+                reviewingRequest: null,
+                finalAmount: '',
+                reviewNote: '',
+                loading: false,
+                processing: false,
+
+                async loadRequests() {
+                    this.loading = true;
+                    try {
+                        this.requests = await apiRequest('/api/admin/conversions?status=pending');
+                    } catch (e) {
+                        showError(e.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                review(req) {
+                    this.reviewingRequest = req;
+                    this.finalAmount = '';
+                    this.reviewNote = '';
+                },
+
+                async approve() {
+                    if (!confirm('Are you sure you want to approve this request?')) {
+                        return;
+                    }
+
+                    this.processing = true;
+                    try {
+                        const body = {
+                            review_note: this.reviewNote,
+                        };
+                        if (this.finalAmount) {
+                            body.final_amount = parseFloat(this.finalAmount);
+                        }
+
+                        await apiRequest(`/api/admin/conversions/${this.reviewingRequest.id}/approve`, {
+                            method: 'PUT',
+                            body: JSON.stringify(body),
+                        });
+
+                        showSuccess('Request approved successfully');
+                        this.reviewingRequest = null;
+                        await this.loadRequests();
+                    } catch (e) {
+                        showError(e.message);
+                    } finally {
+                        this.processing = false;
+                    }
+                },
+
+                async reject() {
+                    if (!this.reviewNote) {
+                        showError('Review note is required for rejection');
+                        return;
+                    }
+
+                    if (!confirm('Are you sure you want to reject this request?')) {
+                        return;
+                    }
+
+                    this.processing = true;
+                    try {
+                        await apiRequest(`/api/admin/conversions/${this.reviewingRequest.id}/reject`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                review_note: this.reviewNote,
+                            }),
+                        });
+
+                        showSuccess('Request rejected');
+                        this.reviewingRequest = null;
+                        await this.loadRequests();
+                    } catch (e) {
+                        showError(e.message);
+                    } finally {
+                        this.processing = false;
+                    }
+                },
+
+                formatAmount(amount) {
+                    return amount ? `$${amount.toFixed(2)}` : '$0.00';
+                },
+
+                formatDate(dateString) {
+                    return new Date(dateString).toLocaleString();
+                }
+            };
+        }
+    </script>
+</body>
+</html>

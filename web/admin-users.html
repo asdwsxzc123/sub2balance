@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - Sub2Balance Admin</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js"></script>
+</head>
+<body class="bg-gray-100">
+    <nav class="nav">
+        <div class="nav-container">
+            <div class="text-xl font-bold">Sub2Balance Admin</div>
+            <div class="nav-links">
+                <a href="/admin-pending.html">Pending</a>
+                <a href="/admin-requests.html">All Requests</a>
+                <a href="/admin-users.html">Users</a>
+                <a href="/admin-logs.html">Logs</a>
+                <a href="#" onclick="logout()">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container" x-data="userManagement()" x-init="loadUsers()">
+        <div class="card">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Users</h2>
+                <button @click="showCreateForm = true" class="btn btn-primary">Create User</button>
+            </div>
+
+            <div x-show="loading" class="text-center py-8">Loading...</div>
+
+            <div x-show="!loading">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="user in users" :key="user.id">
+                            <tr>
+                                <td x-text="user.id"></td>
+                                <td x-text="user.email"></td>
+                                <td x-text="user.role"></td>
+                                <td x-text="formatDate(user.created_at)"></td>
+                                <td>
+                                    <button @click="deleteUser(user.id)" class="btn btn-danger btn-sm">Delete</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Create User Modal -->
+        <div x-show="showCreateForm" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+            <div class="card max-w-md w-full">
+                <h3 class="text-lg font-bold mb-4">Create User</h3>
+                <form @submit.prevent="createUser">
+                    <div class="form-group">
+                        <label class="form-label">Email</label>
+                        <input type="email" class="form-input" x-model="newUser.email" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-input" x-model="newUser.password" required minlength="6">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Role</label>
+                        <select class="form-input" x-model="newUser.role" required>
+                            <option value="staff">Staff</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="submit" class="btn btn-primary" :disabled="creating">
+                            <span x-show="!creating">Create</span>
+                            <span x-show="creating">Creating...</span>
+                        </button>
+                        <button type="button" @click="showCreateForm = false" class="btn">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <script>
+        if (!checkAuth() || !isAdmin()) {
+            window.location.href = '/index.html';
+        }
+
+        function userManagement() {
+            return {
+                users: [],
+                showCreateForm: false,
+                newUser: { email: '', password: '', role: 'staff' },
+                loading: false,
+                creating: false,
+
+                async loadUsers() {
+                    this.loading = true;
+                    try {
+                        this.users = await apiRequest('/api/admin/users');
+                    } catch (e) {
+                        showError(e.message);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async createUser() {
+                    this.creating = true;
+                    try {
+                        await apiRequest('/api/admin/users', {
+                            method: 'POST',
+                            body: JSON.stringify(this.newUser),
+                        });
+                        showSuccess('User created successfully');
+                        this.showCreateForm = false;
+                        this.newUser = { email: '', password: '', role: 'staff' };
+                        await this.loadUsers();
+                    } catch (e) {
+                        showError(e.message);
+                    } finally {
+                        this.creating = false;
+                    }
+                },
+
+                async deleteUser(id) {
+                    if (!confirm('Are you sure you want to delete this user?')) {
+                        return;
+                    }
+
+                    try {
+                        await apiRequest(`/api/admin/users/${id}`, { method: 'DELETE' });
+                        showSuccess('User deleted successfully');
+                        await this.loadUsers();
+                    } catch (e) {
+                        showError(e.message);
+                    }
+                },
+
+                formatDate(dateString) {
+                    return new Date(dateString).toLocaleString();
+                }
+            };
+        }
+    </script>
+</body>
+</html>

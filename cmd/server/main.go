@@ -1,8 +1,11 @@
 package main
 
 import (
+	"embed"
 	"fmt"
+	"io/fs"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -18,6 +21,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+//go:embed web
+var webFS embed.FS
 
 func main() {
 	// Load configuration
@@ -128,6 +134,13 @@ func main() {
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
+
+	// Serve static files
+	webRoot, err := fs.Sub(webFS, "web")
+	if err != nil {
+		log.Fatalf("Failed to get web root: %v", err)
+	}
+	r.StaticFS("/", http.FS(webRoot))
 
 	// Start server
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)

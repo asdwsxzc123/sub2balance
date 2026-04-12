@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build binaries
+        run: |
+          # Linux AMD64
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o sub2balance-linux-amd64
+
+          # Linux ARM64
+          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o sub2balance-linux-arm64
+
+          # macOS AMD64
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o sub2balance-darwin-amd64
+
+          # macOS ARM64 (Apple Silicon)
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o sub2balance-darwin-arm64
+
+          # Windows AMD64
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o sub2balance-windows-amd64.exe
+
+      - name: Create release archives
+        run: |
+          # Linux AMD64
+          tar czf sub2balance-linux-amd64.tar.gz sub2balance-linux-amd64 config.yaml .env.example README.md
+
+          # Linux ARM64
+          tar czf sub2balance-linux-arm64.tar.gz sub2balance-linux-arm64 config.yaml .env.example README.md
+
+          # macOS AMD64
+          tar czf sub2balance-darwin-amd64.tar.gz sub2balance-darwin-amd64 config.yaml .env.example README.md
+
+          # macOS ARM64
+          tar czf sub2balance-darwin-arm64.tar.gz sub2balance-darwin-arm64 config.yaml .env.example README.md
+
+          # Windows AMD64
+          zip sub2balance-windows-amd64.zip sub2balance-windows-amd64.exe config.yaml .env.example README.md
+
+      - name: Generate checksums
+        run: |
+          sha256sum sub2balance-*.tar.gz sub2balance-*.zip > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            sub2balance-linux-amd64.tar.gz
+            sub2balance-linux-arm64.tar.gz
+            sub2balance-darwin-amd64.tar.gz
+            sub2balance-darwin-arm64.tar.gz
+            sub2balance-windows-amd64.zip
+            checksums.txt
+          body: |
+            ## Installation
+
+            Download the appropriate binary for your platform:
+
+            **Linux (AMD64):**
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-linux-amd64.tar.gz
+            tar xzf sub2balance-linux-amd64.tar.gz
+            chmod +x sub2balance-linux-amd64
+            ```
+
+            **Linux (ARM64):**
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-linux-arm64.tar.gz
+            tar xzf sub2balance-linux-arm64.tar.gz
+            chmod +x sub2balance-linux-arm64
+            ```
+
+            **macOS (Intel):**
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-darwin-amd64.tar.gz
+            tar xzf sub2balance-darwin-amd64.tar.gz
+            chmod +x sub2balance-darwin-amd64
+            ```
+
+            **macOS (Apple Silicon):**
+            ```bash
+            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-darwin-arm64.tar.gz
+            tar xzf sub2balance-darwin-arm64.tar.gz
+            chmod +x sub2balance-darwin-arm64
+            ```
+
+            **Windows:**
+            Download `sub2balance-windows-amd64.zip` and extract.
+
+            ## Quick Start
+
+            1. Copy `.env.example` to `.env` and configure:
+               ```bash
+               cp .env.example .env
+               nano .env
+               ```
+
+            2. Set required environment variables:
+               - `JWT_SECRET` - Your JWT signing key
+               - `SUB2API_URL` - Your Sub2API service URL
+               - `SUB2API_API_KEY` - Your Sub2API admin API key
+
+            3. Run the binary:
+               ```bash
+               ./sub2balance-linux-amd64
+               ```
+
+            4. Access at http://localhost:8080
+
+            Default admin credentials:
+            - Email: `admin@sub2balance.local`
+            - Password: `admin123`
+
+            ## Verify checksums
+            ```bash
+            sha256sum -c checksums.txt
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

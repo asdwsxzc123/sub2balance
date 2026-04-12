@@ -19,7 +19,31 @@ Sub2Balance is a secure web application that enables staff to convert Claude mon
 
 ## Quick Start
 
-### Using Docker (Recommended)
+### Option 1: Download Pre-built Binary (Recommended)
+
+**One-line install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/sub2balance/main/deploy.sh | bash -s v1.0.0
+```
+
+**Manual download:**
+```bash
+# Linux AMD64
+wget https://github.com/YOUR_USERNAME/sub2balance/releases/latest/download/sub2balance-linux-amd64.tar.gz
+tar xzf sub2balance-linux-amd64.tar.gz
+chmod +x sub2balance-linux-amd64
+
+# Configure
+cp .env.example .env
+nano .env  # Set JWT_SECRET, SUB2API_URL, SUB2API_API_KEY
+
+# Run
+./sub2balance-linux-amd64
+```
+
+See [Releases](https://github.com/YOUR_USERNAME/sub2balance/releases) for other platforms (ARM64, macOS, Windows).
+
+### Option 2: Using Docker
 
 ```bash
 # 1. Clone and configure
@@ -33,21 +57,30 @@ docker-compose up -d
 open http://localhost:8080
 ```
 
-Default admin credentials: `admin@sub2balance.local` / `admin123`
-
-### Manual Setup
+### Option 3: Build from Source
 
 ```bash
-# 1. Prerequisites
-# - Go 1.25+
-# - SQLite3
+# 1. Prerequisites: Go 1.23+, SQLite3
 
-# 2. Configure
-cp config.yaml.example config.yaml
-# Edit config.yaml with your settings
+# 2. Clone and configure
+git clone https://github.com/YOUR_USERNAME/sub2balance.git
+cd sub2balance
+cp .env.example .env
+nano .env  # Configure required variables
 
-# 3. Set environment variables
-export JWT_SECRET="your-secret-key-min-32-chars"
+# 3. Build and run
+go build -o sub2balance
+./sub2balance
+```
+
+**Default admin credentials:** `admin@sub2balance.local` / `admin123`
+
+**Important:** Change the admin password after first login!
+
+### Required Environment Variables
+
+```bash
+JWT_SECRET="your-secret-key-min-32-chars"
 export SUB2API_URL="https://your-sub2api.com"
 export SUB2API_API_KEY="admin-xxxxx"
 

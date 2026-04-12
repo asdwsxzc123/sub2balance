@@ -103,10 +103,10 @@ func main() {
 		// Conversions (staff)
 		conversions := protected.Group("/conversions")
 		{
-			conversions.POST("/query", convHandler.Query)
-			conversions.POST("", convHandler.Create)
-			conversions.GET("", convHandler.ListMy)
-			conversions.GET("/:id", convHandler.Get)
+			conversions.POST("/query", convHandler.QuerySubscription)
+			conversions.POST("", convHandler.CreateRequest)
+			conversions.GET("", convHandler.ListMyRequests)
+			conversions.GET("/:id", convHandler.GetRequest)
 		}
 
 		// Admin routes
@@ -114,19 +114,19 @@ func main() {
 		admin.Use(middleware.RequireAdmin())
 		{
 			// Conversion management
-			admin.GET("/conversions", adminHandler.ListRequests)
-			admin.GET("/conversions/:id", convHandler.Get)
-			admin.PUT("/conversions/:id/approve", adminHandler.Approve)
-			admin.PUT("/conversions/:id/reject", adminHandler.Reject)
+			admin.GET("/conversions", adminHandler.ListAllRequests)
+			admin.GET("/conversions/:id", convHandler.GetRequest)
+			admin.PUT("/conversions/:id/approve", adminHandler.ApproveRequest)
+			admin.PUT("/conversions/:id/reject", adminHandler.RejectRequest)
 
 			// User management
-			admin.GET("/users", userHandler.List)
-			admin.POST("/users", userHandler.Create)
-			admin.PUT("/users/:id", userHandler.Update)
-			admin.DELETE("/users/:id", userHandler.Delete)
+			admin.GET("/users", userHandler.ListUsers)
+			admin.POST("/users", userHandler.CreateUser)
+			admin.PUT("/users/:id", userHandler.UpdateUser)
+			admin.DELETE("/users/:id", userHandler.DeleteUser)
 
 			// Audit logs
-			admin.GET("/audit-logs", adminHandler.ListLogs)
+			admin.GET("/audit-logs", adminHandler.ListAuditLogs)
 		}
 	}
 

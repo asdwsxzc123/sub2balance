@@ -63,3 +63,7 @@ func (s *AuditService) List(ctx context.Context, page, pageSize int) ([]*model.A
 
 	return logs, total, nil
 }
+
+func (s *AuditService) ListLogs(ctx context.Context, limit, offset int) ([]*model.AuditLog, error) {
+	return s.auditRepo.List(ctx, limit, offset)
+}

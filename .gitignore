@@ -1,0 +1,35 @@
+# Binaries
+sub2balance
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output
+*.out
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# Config
+config.yaml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

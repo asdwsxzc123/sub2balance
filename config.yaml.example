@@ -1,0 +1,22 @@
+server:
+  port: 8080
+  mode: release  # debug or release
+
+database:
+  path: ./data/sub2balance.db
+
+jwt:
+  secret: ${JWT_SECRET}
+  expire_hours: 24
+
+sub2api:
+  base_url: ${SUB2API_URL}
+  api_key: ${SUB2API_API_KEY}
+  timeout_seconds: 30
+  max_retries: 3
+
+security:
+  bcrypt_cost: 12
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60

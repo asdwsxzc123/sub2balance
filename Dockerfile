@@ -35,7 +35,7 @@ WORKDIR /app
 COPY --from=backend /out/sub2balance /app/sub2balance
 RUN mkdir -p /app/data && chown -R app:app /app
 USER app
-EXPOSE 8080
+EXPOSE 8089
 HEALTHCHECK --interval=30s --timeout=3s --retries=3 --start-period=5s \
-  CMD wget -qO- http://localhost:8080/health || exit 1
+  CMD wget -qO- http://localhost:8089/health || exit 1
 ENTRYPOINT ["/app/sub2balance"]

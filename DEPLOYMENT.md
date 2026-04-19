@@ -85,7 +85,7 @@ sudo chown $(id -u):$(id -g) data
 
 ### 5. 检查 `config.yaml`
 
-默认 `config.yaml` 已经能直接用，只需要确认 `server.port` 是 `8080`（和 compose 里对外映射一致）。如果你要换端口，改 compose 的 `ports:` 一侧即可，不用动 config.yaml。
+默认 `config.yaml` 已经能直接用，只需要确认 `server.port` 是 `8089`（和 compose 里对外映射一致）。如果你要换端口，改 compose 的 `ports:` 一侧即可，不用动 config.yaml。
 
 ### 6. 启动
 
@@ -95,11 +95,11 @@ docker compose up -d         # 后台启动
 docker compose logs -f       # 观察启动日志（Ctrl+C 退出不会停容器）
 ```
 
-看到 `Server starting on :8080` 就成功了。
+看到 `Server starting on :8089` 就成功了。
 
 ### 7. 首次登录 + 配置 Sub2API
 
-1. 浏览器打开 `http://<服务器IP>:8080`
+1. 浏览器打开 `http://<服务器IP>:8089`
 2. 用 `.env` 里的 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 登录
 3. 进入 **系统设置**（`/admin/settings`），填入：
    - **Base URL**：你的 Sub2API 实例地址
@@ -110,7 +110,7 @@ docker compose logs -f       # 观察启动日志（Ctrl+C 退出不会停容器
 
 ### 8. 锁定默认端口
 
-生产环境不要直接把 8080 暴露到公网。继续往下看 **反向代理 + HTTPS** 章节。
+生产环境不要直接把 8089 暴露到公网。继续往下看 **反向代理 + HTTPS** 章节。
 
 ---
 
@@ -146,7 +146,7 @@ set -a; source .env; set +a
 ./sub2balance-linux-amd64
 ```
 
-访问 `http://<IP>:8080` 确认能登录。Ctrl+C 停掉。
+访问 `http://<IP>:8089` 确认能登录。Ctrl+C 停掉。
 
 ### 4. 注册为 systemd 服务
 
@@ -185,7 +185,7 @@ sudo systemctl status sub2balance
 ```caddyfile
 # /etc/caddy/Caddyfile
 sub2balance.yourdomain.com {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8089
 }
 ```
 
@@ -204,7 +204,7 @@ server {
     server_name sub2balance.yourdomain.com;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:8089;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -225,14 +225,14 @@ sudo certbot --nginx -d sub2balance.yourdomain.com
 # Ubuntu/Debian
 sudo ufw allow 80/tcp
 sudo ufw allow 443/tcp
-# 不要开放 8080！让它只监听本机
+# 不要开放 8089！让它只监听本机
 ```
 
 如果要求应用只监听 127.0.0.1，编辑 `docker-compose.yml`：
 
 ```yaml
     ports:
-      - "127.0.0.1:8080:8080"   # 只绑定到本机
+      - "127.0.0.1:8089:8089"   # 只绑定到本机
 ```
 
 ---
@@ -280,7 +280,7 @@ SUB2BALANCE_IMAGE=ghcr.io/asdwsxzc123/sub2balance:v1.2.3
 ### 健康检查
 
 ```bash
-curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8089/health
 # 返回 {"status":"ok"} 表示活着
 ```
 
@@ -315,7 +315,7 @@ A: 只有 `users` 表为空时才会用它创建初始账号。想重置：`dock
 A: 确认用的是 master 分支之后构建的镜像（见 docker.yml，已支持 linux/arm64）。老镜像只有 amd64。
 
 **Q: 想换端口**
-A: 改 `docker-compose.yml` 的 `ports: "新端口:8080"`（左侧是宿主机端口），不用改 config.yaml。
+A: 改 `docker-compose.yml` 的 `ports: "新端口:8089"`（左侧是宿主机端口），不用改 config.yaml。
 
 **Q: 前端改了代码怎么重新打包**
 A: 只改前端不用重新发布，本地 `cd frontend && pnpm build`，然后重新 `go build .` 或 `docker build .`。因为前端是 `//go:embed` 进二进制的。
@@ -326,13 +326,13 @@ A: 只改前端不用重新发布，本地 `cd frontend && pnpm build`，然后�
 
 部署完后，按这个顺序验证：
 
-- [ ] `curl http://127.0.0.1:8080/health` 返回 `{"status":"ok"}`
+- [ ] `curl http://127.0.0.1:8089/health` 返回 `{"status":"ok"}`
 - [ ] 浏览器能打开登录页
 - [ ] 用 `.env` 里的邮箱密码能登录
 - [ ] `/admin/settings` 配置 Sub2API 后点测试成功
 - [ ] `/admin/group-prices` 添加至少一条价格映射
 - [ ] 新建一个测试工单，走完 staff 提交 → admin 审批的流程
-- [ ] 防火墙只放行 80/443，8080 不对公网暴露
+- [ ] 防火墙只放行 80/443，8089 不对公网暴露
 - [ ] 配置了每日备份 cron
 
 ---

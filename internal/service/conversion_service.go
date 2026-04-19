@@ -4,11 +4,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/yourusername/sub2balance/internal/model"
 	"github.com/yourusername/sub2balance/internal/repository"
 )
+
+// Extracts the price after a pipe separator in a group name. Handles full-width (｜),
+// half-width (|), and the 丨 ideograph. Matches e.g. "codex 50刀｜289 套餐" → 289,
+// "codex | 300刀" → 300. Returns 0 when nothing matches.
+var purchaseAmountPattern = regexp.MustCompile(`[|｜丨]\s*([0-9]+(?:\.[0-9]+)?)`)
+
+func parsePurchaseAmount(groupName string) (float64, bool) {
+	m := purchaseAmountPattern.FindStringSubmatch(groupName)
+	if len(m) < 2 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
+}
 
 var (
 	ErrRequestNotFound     = errors.New("conversion request not found")
@@ -18,20 +37,23 @@ var (
 )
 
 type ConversionService struct {
-	convRepo      *repository.ConversionRepository
-	sub2apiClient *Sub2APIClient
-	auditService  *AuditService
+	convRepo       *repository.ConversionRepository
+	groupPriceRepo *repository.GroupPriceRepository
+	sub2apiClient  *Sub2APIClient
+	auditService   *AuditService
 }
 
 func NewConversionService(
 	convRepo *repository.ConversionRepository,
+	groupPriceRepo *repository.GroupPriceRepository,
 	sub2apiClient *Sub2APIClient,
 	auditService *AuditService,
 ) *ConversionService {
 	return &ConversionService{
-		convRepo:      convRepo,
-		sub2apiClient: sub2apiClient,
-		auditService:  auditService,
+		convRepo:       convRepo,
+		groupPriceRepo: groupPriceRepo,
+		sub2apiClient:  sub2apiClient,
+		auditService:   auditService,
 	}
 }
 
@@ -39,58 +61,175 @@ type QuerySubscriptionResult struct {
 	UserEmail        string  `json:"user_email"`
 	Sub2APIUserID    int64   `json:"sub2api_user_id"`
 	SubscriptionID   int64   `json:"subscription_id"`
+	GroupID          int64   `json:"group_id"`
 	GroupName        string  `json:"group_name"`
+	Platform         string  `json:"platform,omitempty"`
 	OriginalAmount   float64 `json:"original_amount"`
+	OriginalSource   string  `json:"original_source,omitempty"`
+	Currency         string  `json:"currency,omitempty"`
 	ConsumedAmount   float64 `json:"consumed_amount"`
 	ConversionAmount float64 `json:"conversion_amount"`
 	Status           string  `json:"status"`
+	ExpiresAt        string  `json:"expires_at,omitempty"`
+}
+
+type CreateRequestInput struct {
+	Query           *QuerySubscriptionResult
+	RequestType     string
+	TargetGroupID   *int64
+	TargetGroupName *string
+	ValidityDays    *int
+}
+
+type AvailableGroup struct {
+	ID            int64    `json:"id"`
+	Name          string   `json:"name"`
+	Platform      string   `json:"platform"`
+	DailyLimitUSD *float64 `json:"daily_limit_usd"`
+}
+
+type QueryByEmailResult struct {
+	User          *Sub2APIUser              `json:"user"`
+	Subscriptions []*QuerySubscriptionResult `json:"subscriptions"`
+}
+
+func (s *ConversionService) buildQueryResult(ctx context.Context, user *Sub2APIUser, sub *Sub2APISubscription) *QuerySubscriptionResult {
+	email := ""
+	if user != nil {
+		email = user.Email
+	} else if sub.User != nil {
+		email = sub.User.Email
+	}
+
+	groupID := sub.GroupID
+	groupName := ""
+	platform := ""
+	var usdLimit float64
+	if sub.Group != nil {
+		groupName = sub.Group.Name
+		platform = sub.Group.Platform
+		switch {
+		case sub.Group.MonthlyLimitUSD != nil:
+			usdLimit = *sub.Group.MonthlyLimitUSD
+		case sub.Group.WeeklyLimitUSD != nil:
+			usdLimit = *sub.Group.WeeklyLimitUSD
+		case sub.Group.DailyLimitUSD != nil:
+			usdLimit = *sub.Group.DailyLimitUSD
+		}
+	}
+
+	// Pricing priority: DB mapping > parsed from group name > upstream USD limit.
+	var original float64
+	var source string
+	currency := "CNY"
+
+	if s.groupPriceRepo != nil && groupID > 0 {
+		if gp, err := s.groupPriceRepo.Get(ctx, groupID); err == nil && gp != nil {
+			original = gp.Price
+			source = "mapping"
+			if gp.Currency != "" {
+				currency = gp.Currency
+			}
+		}
+	}
+	if source == "" {
+		if parsed, ok := parsePurchaseAmount(groupName); ok {
+			original = parsed
+			source = "parsed"
+		}
+	}
+	if source == "" {
+		original = usdLimit
+		source = "limit"
+		currency = "USD"
+	}
+
+	var consumed float64
+	switch {
+	case sub.MonthlyUsageUSD > 0:
+		consumed = sub.MonthlyUsageUSD
+	case sub.WeeklyUsageUSD > 0:
+		consumed = sub.WeeklyUsageUSD
+	default:
+		consumed = sub.DailyUsageUSD
+	}
+
+	// 1:1 抵扣：转换金额 = 实付金额 - 已消耗美元额度，无论原始币种。
+	conversion := original - consumed
+	if conversion < 0 {
+		conversion = 0
+	}
+
+	userID := sub.UserID
+	if user != nil {
+		userID = user.ID
+	}
+
+	return &QuerySubscriptionResult{
+		UserEmail:        email,
+		Sub2APIUserID:    userID,
+		SubscriptionID:   sub.ID,
+		GroupID:          groupID,
+		GroupName:        groupName,
+		Platform:         platform,
+		OriginalAmount:   original,
+		OriginalSource:   source,
+		Currency:         currency,
+		ConsumedAmount:   consumed,
+		ConversionAmount: conversion,
+		Status:           sub.Status,
+		ExpiresAt:        sub.ExpiresAt,
+	}
 }
 
 func (s *ConversionService) QuerySubscription(ctx context.Context, userID int64, subscriptionID int64) (*QuerySubscriptionResult, error) {
-	// Get user info
 	user, err := s.sub2apiClient.GetUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// Get subscription info
 	sub, err := s.sub2apiClient.GetSubscription(ctx, subscriptionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get subscription: %w", err)
 	}
 
-	// Validate subscription is active
 	if sub.Status != "active" {
 		return nil, ErrSubscriptionInvalid
 	}
 
-	// Calculate consumed amount (use monthly as the primary metric)
-	consumedAmount := sub.MonthlyUsedUSD
+	return s.buildQueryResult(ctx, user, sub), nil
+}
 
-	// For this implementation, we'll use monthly limit as the "original amount"
-	// In a real scenario, you'd need to track the actual paid amount
-	originalAmount := sub.MonthlyLimitUSD
-
-	// Calculate conversion amount
-	conversionAmount := originalAmount - consumedAmount
-	if conversionAmount < 0 {
-		conversionAmount = 0
+func (s *ConversionService) QueryByEmail(ctx context.Context, email string) (*QueryByEmailResult, error) {
+	user, err := s.sub2apiClient.SearchUserByEmail(ctx, email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find user: %w", err)
 	}
 
-	return &QuerySubscriptionResult{
-		UserEmail:        user.Email,
-		Sub2APIUserID:    user.ID,
-		SubscriptionID:   sub.ID,
-		GroupName:        sub.GroupName,
-		OriginalAmount:   originalAmount,
-		ConsumedAmount:   consumedAmount,
-		ConversionAmount: conversionAmount,
-		Status:           sub.Status,
+	results := make([]*QuerySubscriptionResult, 0, len(user.Subscriptions))
+	for i := range user.Subscriptions {
+		results = append(results, s.buildQueryResult(ctx, user, &user.Subscriptions[i]))
+	}
+
+	// Strip embedded subscriptions from the user payload to keep the response focused.
+	userCopy := *user
+	userCopy.Subscriptions = nil
+
+	return &QueryByEmailResult{
+		User:          &userCopy,
+		Subscriptions: results,
 	}, nil
 }
 
-func (s *ConversionService) CreateRequest(ctx context.Context, submitterID uint, query *QuerySubscriptionResult) (*model.ConversionRequest, error) {
+func (s *ConversionService) CreateRequest(ctx context.Context, submitterID uint, input *CreateRequestInput) (*model.ConversionRequest, error) {
+	requestType := input.RequestType
+	if requestType == "" {
+		requestType = "balance"
+	}
+
+	query := input.Query
 	req := &model.ConversionRequest{
+		RequestType:      requestType,
 		UserEmail:        query.UserEmail,
 		Sub2APIUserID:    query.Sub2APIUserID,
 		SubscriptionID:   query.SubscriptionID,
@@ -98,6 +237,9 @@ func (s *ConversionService) CreateRequest(ctx context.Context, submitterID uint,
 		OriginalAmount:   query.OriginalAmount,
 		ConsumedAmount:   query.ConsumedAmount,
 		ConversionAmount: query.ConversionAmount,
+		TargetGroupID:    input.TargetGroupID,
+		TargetGroupName:  input.TargetGroupName,
+		ValidityDays:     input.ValidityDays,
 		Status:           "pending",
 		SubmittedBy:      submitterID,
 	}
@@ -106,14 +248,48 @@ func (s *ConversionService) CreateRequest(ctx context.Context, submitterID uint,
 		return nil, err
 	}
 
-	// Log audit
-	_ = s.auditService.LogWithRequest(ctx, submitterID, req.ID, "create_request", map[string]interface{}{
-		"user_email":        req.UserEmail,
-		"subscription_id":   req.SubscriptionID,
-		"conversion_amount": req.ConversionAmount,
-	})
+	details := map[string]interface{}{
+		"request_type":    req.RequestType,
+		"user_email":      req.UserEmail,
+		"subscription_id": req.SubscriptionID,
+	}
+	if req.RequestType == "switch" {
+		details["target_group_id"] = req.TargetGroupID
+		details["target_group_name"] = req.TargetGroupName
+		details["validity_days"] = req.ValidityDays
+	} else {
+		details["conversion_amount"] = req.ConversionAmount
+	}
+	_ = s.auditService.LogWithRequest(ctx, submitterID, req.ID, "create_request", details)
 
 	return req, nil
+}
+
+func (s *ConversionService) ListAvailableGroups(ctx context.Context, platform string) ([]AvailableGroup, error) {
+	groups, err := s.sub2apiClient.ListGroups(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]AvailableGroup, 0, len(groups))
+	for _, g := range groups {
+		if g.SubscriptionType != "subscription" {
+			continue
+		}
+		if g.Status != "active" {
+			continue
+		}
+		if platform != "" && g.Platform != platform {
+			continue
+		}
+		result = append(result, AvailableGroup{
+			ID:            g.ID,
+			Name:          g.Name,
+			Platform:      g.Platform,
+			DailyLimitUSD: g.DailyLimitUSD,
+		})
+	}
+	return result, nil
 }
 
 func (s *ConversionService) GetRequest(ctx context.Context, id uint, userID uint, isAdmin bool) (*model.ConversionRequest, error) {
@@ -151,35 +327,75 @@ func (s *ConversionService) ApproveRequest(ctx context.Context, id uint, reviewe
 		return ErrInvalidStatus
 	}
 
-	// Use final amount if provided, otherwise use conversion amount
-	amountToAdd := req.ConversionAmount
-	if finalAmount != nil {
-		amountToAdd = *finalAmount
-		req.FinalAmount = finalAmount
-	}
+	var auditDetails map[string]interface{}
 
-	// Add balance to sub2api
-	noteText := fmt.Sprintf("Converted from subscription #%d", req.SubscriptionID)
-	if note != "" {
-		noteText += " - " + note
-	}
+	switch req.RequestType {
+	case "switch":
+		if req.TargetGroupID == nil || req.ValidityDays == nil {
+			return fmt.Errorf("switch request missing target_group_id or validity_days")
+		}
 
-	if err := s.sub2apiClient.AddBalance(ctx, req.Sub2APIUserID, amountToAdd, noteText); err != nil {
-		return fmt.Errorf("failed to add balance: %w", err)
-	}
+		newSub, err := s.sub2apiClient.AssignSubscription(ctx, req.Sub2APIUserID, *req.TargetGroupID, *req.ValidityDays)
+		if err != nil {
+			return fmt.Errorf("failed to assign new subscription: %w", err)
+		}
 
-	// Cancel subscription
-	if err := s.sub2apiClient.CancelSubscription(ctx, req.SubscriptionID); err != nil {
-		// Balance was added but cancellation failed - log this critical error
-		_ = s.auditService.LogWithRequest(ctx, reviewerID, req.ID, "cancellation_failed", map[string]interface{}{
-			"error":           err.Error(),
+		if err := s.sub2apiClient.CancelSubscription(ctx, req.SubscriptionID); err != nil {
+			_ = s.auditService.LogWithRequest(ctx, reviewerID, req.ID, "cancellation_failed", map[string]interface{}{
+				"error":               err.Error(),
+				"source_subscription": req.SubscriptionID,
+				"new_subscription":    newSub.ID,
+				"target_group_id":     *req.TargetGroupID,
+			})
+			return fmt.Errorf("new subscription assigned but source cancellation failed: %w", err)
+		}
+
+		auditDetails = map[string]interface{}{
+			"request_type":        "switch",
+			"source_subscription": req.SubscriptionID,
+			"target_group_id":     *req.TargetGroupID,
+			"target_group_name":   req.TargetGroupName,
+			"validity_days":       *req.ValidityDays,
+			"new_subscription":    newSub.ID,
+			"note":                note,
+		}
+
+	case "balance", "":
+		amountToAdd := req.ConversionAmount
+		if finalAmount != nil {
+			amountToAdd = *finalAmount
+			req.FinalAmount = finalAmount
+		}
+
+		noteText := fmt.Sprintf("Converted from subscription #%d", req.SubscriptionID)
+		if note != "" {
+			noteText += " - " + note
+		}
+
+		if err := s.sub2apiClient.AddBalance(ctx, req.Sub2APIUserID, amountToAdd, noteText); err != nil {
+			return fmt.Errorf("failed to add balance: %w", err)
+		}
+
+		if err := s.sub2apiClient.CancelSubscription(ctx, req.SubscriptionID); err != nil {
+			_ = s.auditService.LogWithRequest(ctx, reviewerID, req.ID, "cancellation_failed", map[string]interface{}{
+				"error":           err.Error(),
+				"subscription_id": req.SubscriptionID,
+				"balance_added":   amountToAdd,
+			})
+			return fmt.Errorf("balance added but subscription cancellation failed: %w", err)
+		}
+
+		auditDetails = map[string]interface{}{
+			"request_type":    "balance",
+			"final_amount":    amountToAdd,
 			"subscription_id": req.SubscriptionID,
-			"balance_added":   amountToAdd,
-		})
-		return fmt.Errorf("balance added but subscription cancellation failed: %w", err)
+			"note":            note,
+		}
+
+	default:
+		return fmt.Errorf("unknown request_type: %s", req.RequestType)
 	}
 
-	// Update request status
 	now := time.Now()
 	req.Status = "approved"
 	req.ReviewedBy = &reviewerID
@@ -190,12 +406,7 @@ func (s *ConversionService) ApproveRequest(ctx context.Context, id uint, reviewe
 		return err
 	}
 
-	// Log audit
-	_ = s.auditService.LogWithRequest(ctx, reviewerID, req.ID, "approve_request", map[string]interface{}{
-		"final_amount":    amountToAdd,
-		"subscription_id": req.SubscriptionID,
-		"note":            note,
-	})
+	_ = s.auditService.LogWithRequest(ctx, reviewerID, req.ID, "approve_request", auditDetails)
 
 	return nil
 }

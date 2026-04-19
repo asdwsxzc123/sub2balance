@@ -7,20 +7,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 )
 
 type Sub2APIClient struct {
-	baseURL    string
-	apiKey     string
+	settings   *SettingsService
 	httpClient *http.Client
 	maxRetries int
 }
 
-func NewSub2APIClient(baseURL, apiKey string, timeout time.Duration, maxRetries int) *Sub2APIClient {
+func NewSub2APIClient(settings *SettingsService, timeout time.Duration, maxRetries int) *Sub2APIClient {
 	return &Sub2APIClient{
-		baseURL: baseURL,
-		apiKey:  apiKey,
+		settings: settings,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -28,50 +28,129 @@ func NewSub2APIClient(baseURL, apiKey string, timeout time.Duration, maxRetries 
 	}
 }
 
+func (c *Sub2APIClient) credentials() (baseURL, apiKey string, err error) {
+	baseURL, apiKey = c.settings.Sub2API()
+	if baseURL == "" || apiKey == "" {
+		return "", "", ErrSub2APINotConfigured
+	}
+	return strings.TrimRight(baseURL, "/"), apiKey, nil
+}
+
 type Sub2APIUser struct {
-	ID      int64   `json:"id"`
-	Email   string  `json:"email"`
-	Balance float64 `json:"balance"`
+	ID            int64                 `json:"id"`
+	Email         string                `json:"email"`
+	Balance       float64               `json:"balance"`
+	Subscriptions []Sub2APISubscription `json:"subscriptions,omitempty"`
+}
+
+type Sub2APIGroup struct {
+	ID               int64    `json:"id"`
+	Name             string   `json:"name"`
+	Platform         string   `json:"platform"`
+	SubscriptionType string   `json:"subscription_type"`
+	Status           string   `json:"status"`
+	IsExclusive      bool     `json:"is_exclusive"`
+	SortOrder        int      `json:"sort_order"`
+	DailyLimitUSD    *float64 `json:"daily_limit_usd"`
+	WeeklyLimitUSD   *float64 `json:"weekly_limit_usd"`
+	MonthlyLimitUSD  *float64 `json:"monthly_limit_usd"`
 }
 
 type Sub2APISubscription struct {
-	ID              int64   `json:"id"`
-	UserID          int64   `json:"user_id"`
-	GroupID         int64   `json:"group_id"`
-	GroupName       string  `json:"group_name"`
-	Status          string  `json:"status"`
-	DailyUsedUSD    float64 `json:"daily_used_usd"`
-	WeeklyUsedUSD   float64 `json:"weekly_used_usd"`
-	MonthlyUsedUSD  float64 `json:"monthly_used_usd"`
-	DailyLimitUSD   float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD  float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD float64 `json:"monthly_limit_usd"`
+	ID              int64         `json:"id"`
+	UserID          int64         `json:"user_id"`
+	GroupID         int64         `json:"group_id"`
+	Status          string        `json:"status"`
+	DailyUsageUSD   float64       `json:"daily_usage_usd"`
+	WeeklyUsageUSD  float64       `json:"weekly_usage_usd"`
+	MonthlyUsageUSD float64       `json:"monthly_usage_usd"`
+	StartsAt        string        `json:"starts_at"`
+	ExpiresAt       string        `json:"expires_at"`
+	User            *Sub2APIUser  `json:"user"`
+	Group           *Sub2APIGroup `json:"group"`
 }
 
-func (c *Sub2APIClient) GetUserByEmail(ctx context.Context, email string) (*Sub2APIUser, error) {
-	// Note: sub2api doesn't have direct email lookup, need to implement search
-	// For now, return error indicating manual lookup needed
-	return nil, fmt.Errorf("email lookup not implemented - use user ID directly")
+type sub2apiEnvelope struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
+type sub2apiList[T any] struct {
+	Items    []T   `json:"items"`
+	Total    int64 `json:"total"`
+	Page     int   `json:"page"`
+	PageSize int   `json:"page_size"`
+	Pages    int   `json:"pages"`
+}
+
+func (c *Sub2APIClient) SearchUserByEmail(ctx context.Context, email string) (*Sub2APIUser, error) {
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf(
+		"%s/api/v1/admin/users?page=1&page_size=20&search=%s&include_subscriptions=true&sort_by=created_at&sort_order=desc",
+		baseURL, url.QueryEscape(email),
+	)
+
+	var list sub2apiList[Sub2APIUser]
+	if err := c.doRequest(ctx, "GET", endpoint, nil, &list); err != nil {
+		return nil, err
+	}
+
+	for i := range list.Items {
+		if list.Items[i].Email == email {
+			return &list.Items[i], nil
+		}
+	}
+	return nil, fmt.Errorf("no user found for email %q", email)
 }
 
 func (c *Sub2APIClient) GetUser(ctx context.Context, userID int64) (*Sub2APIUser, error) {
-	url := fmt.Sprintf("%s/api/v1/admin/users/%d", c.baseURL, userID)
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/users/%d", baseURL, userID)
 
 	var user Sub2APIUser
-	err := c.doRequest(ctx, "GET", url, nil, &user)
+	err = c.doRequest(ctx, "GET", endpoint, nil, &user)
 	return &user, err
 }
 
 func (c *Sub2APIClient) GetSubscription(ctx context.Context, subscriptionID int64) (*Sub2APISubscription, error) {
-	url := fmt.Sprintf("%s/api/v1/admin/subscriptions/%d", c.baseURL, subscriptionID)
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/subscriptions/%d", baseURL, subscriptionID)
 
 	var sub Sub2APISubscription
-	err := c.doRequest(ctx, "GET", url, nil, &sub)
+	err = c.doRequest(ctx, "GET", endpoint, nil, &sub)
 	return &sub, err
 }
 
+func (c *Sub2APIClient) ListSubscriptionsByUser(ctx context.Context, userID int64) ([]Sub2APISubscription, error) {
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/subscriptions?user_id=%d&page=1&page_size=100", baseURL, userID)
+
+	var list sub2apiList[Sub2APISubscription]
+	if err := c.doRequest(ctx, "GET", endpoint, nil, &list); err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
 func (c *Sub2APIClient) AddBalance(ctx context.Context, userID int64, amount float64, note string) error {
-	url := fmt.Sprintf("%s/api/v1/admin/users/%d/balance", c.baseURL, userID)
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/users/%d/balance", baseURL, userID)
 
 	body := map[string]interface{}{
 		"balance":   amount,
@@ -79,15 +158,82 @@ func (c *Sub2APIClient) AddBalance(ctx context.Context, userID int64, amount flo
 		"notes":     note,
 	}
 
-	return c.doRequest(ctx, "POST", url, body, nil)
+	return c.doRequest(ctx, "POST", endpoint, body, nil)
 }
 
 func (c *Sub2APIClient) CancelSubscription(ctx context.Context, subscriptionID int64) error {
-	url := fmt.Sprintf("%s/api/v1/admin/subscriptions/%d", c.baseURL, subscriptionID)
-	return c.doRequest(ctx, "DELETE", url, nil, nil)
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/subscriptions/%d", baseURL, subscriptionID)
+	return c.doRequest(ctx, "DELETE", endpoint, nil, nil)
 }
 
-func (c *Sub2APIClient) doRequest(ctx context.Context, method, url string, body interface{}, result interface{}) error {
+func (c *Sub2APIClient) ListGroups(ctx context.Context) ([]Sub2APIGroup, error) {
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf(
+		"%s/api/v1/admin/groups?page=1&page_size=100&is_exclusive=true&sort_by=sort_order&sort_order=asc",
+		baseURL,
+	)
+
+	var list sub2apiList[Sub2APIGroup]
+	if err := c.doRequest(ctx, "GET", endpoint, nil, &list); err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func (c *Sub2APIClient) AssignSubscription(ctx context.Context, userID, groupID int64, validityDays int) (*Sub2APISubscription, error) {
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/subscriptions/assign", baseURL)
+
+	body := map[string]interface{}{
+		"user_id":       userID,
+		"group_id":      groupID,
+		"validity_days": validityDays,
+	}
+
+	var sub Sub2APISubscription
+	if err := c.doRequest(ctx, "POST", endpoint, body, &sub); err != nil {
+		return nil, err
+	}
+	return &sub, nil
+}
+
+// TestConnection sends a lightweight probe with the provided credentials.
+// Used by admin settings page to validate before/after save.
+func (c *Sub2APIClient) TestConnection(ctx context.Context, baseURL, apiKey string) error {
+	baseURL = strings.TrimRight(baseURL, "/")
+	endpoint := fmt.Sprintf("%s/api/v1/admin/groups?page=1&page_size=1", baseURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("x-api-key", apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("connect: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("upstream status %d: %s", resp.StatusCode, string(body))
+}
+
+func (c *Sub2APIClient) doRequest(ctx context.Context, method, endpoint string, body interface{}, result interface{}) error {
+	_, apiKey, err := c.credentials()
+	if err != nil {
+		return err
+	}
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -103,12 +249,12 @@ func (c *Sub2APIClient) doRequest(ctx context.Context, method, url string, body 
 			time.Sleep(time.Second * time.Duration(attempt))
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, reqBody)
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
 
-		req.Header.Set("x-api-key", c.apiKey)
+		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := c.httpClient.Do(req)
@@ -117,21 +263,31 @@ func (c *Sub2APIClient) doRequest(ctx context.Context, method, url string, body 
 			continue
 		}
 
-		defer resp.Body.Close()
 		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			if result != nil && len(respBody) > 0 {
-				if err := json.Unmarshal(respBody, result); err != nil {
-					return fmt.Errorf("failed to parse response: %w", err)
-				}
+			if len(respBody) == 0 {
+				return nil
+			}
+			var envelope sub2apiEnvelope
+			if err := json.Unmarshal(respBody, &envelope); err != nil {
+				return fmt.Errorf("failed to parse response envelope: %w", err)
+			}
+			if envelope.Code != 0 {
+				return fmt.Errorf("upstream API error (code %d): %s", envelope.Code, envelope.Message)
+			}
+			if result == nil || len(envelope.Data) == 0 {
+				return nil
+			}
+			if err := json.Unmarshal(envelope.Data, result); err != nil {
+				return fmt.Errorf("failed to parse response data: %w", err)
 			}
 			return nil
 		}
 
 		lastErr = fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
 
-		// Don't retry on client errors
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return lastErr
 		}

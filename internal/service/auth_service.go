@@ -85,6 +85,25 @@ func (s *AuthService) HashPassword(password string) (string, error) {
 	return string(hash), nil
 }
 
+func (s *AuthService) ChangePassword(ctx context.Context, userID uint, oldPassword, newPassword string) error {
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(oldPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+
+	hash, err := s.HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	user.PasswordHash = hash
+	return s.userRepo.Update(ctx, user)
+}
+
 func (s *AuthService) generateToken(user *model.User) (string, error) {
 	claims := &Claims{
 		UserID: user.ID,

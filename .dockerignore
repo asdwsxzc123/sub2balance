@@ -1,0 +1,26 @@
+.git
+.github
+.claude
+.vscode
+.idea
+
+# Local data & build artifacts
+data/
+sub2balance
+sub2balance-*
+*.db
+
+# Frontend outputs (rebuilt inside image)
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Docs & local-only files
+docs/
+*.md
+!README.md
+demo.yaml
+config.yaml
+.env
+install-codex.sh
+deploy.sh

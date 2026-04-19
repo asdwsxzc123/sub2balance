@@ -2,7 +2,7 @@
 set -e
 
 VERSION=${1:-"v1.0.0"}
-REPO_URL="https://github.com/YOUR_USERNAME/sub2balance"
+REPO_URL="${SUB2BALANCE_REPO_URL:-https://github.com/asdwsxzc123/sub2balance}"
 
 echo "🚀 Deploying Sub2Balance ${VERSION}"
 echo ""
@@ -56,9 +56,14 @@ if [ ! -f .env ]; then
     echo ""
     echo "Required environment variables:"
     echo "  - JWT_SECRET"
-    echo "  - SUB2API_URL"
-    echo "  - SUB2API_API_KEY"
+    echo "  - ADMIN_EMAIL"
+    echo "  - ADMIN_PASSWORD"
     echo ""
+fi
+
+if [ ! -f config.yaml ] && [ -f config.yaml.example ]; then
+    cp config.yaml.example config.yaml
+    echo "📝 Created config.yaml from example"
 fi
 
 # Create systemd service (optional)
@@ -98,10 +103,8 @@ echo ""
 echo "✅ Deployment complete!"
 echo ""
 echo "Next steps:"
-echo "  1. Edit .env and configure required variables"
-echo "  2. Run: ./${BINARY_NAME}"
-echo "  3. Access at http://localhost:8080"
-echo ""
-echo "Default admin credentials:"
-echo "  Email: admin@sub2balance.local"
-echo "  Password: admin123"
+echo "  1. Copy config.yaml.example to config.yaml if you haven't already"
+echo "  2. Edit .env — set JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD"
+echo "  3. Run: ./${BINARY_NAME}"
+echo "  4. Access at http://localhost:8080 and log in as the admin you defined"
+echo "  5. From the admin UI, set the Sub2API upstream at /admin/settings"

@@ -77,7 +77,7 @@ mkdir -p data && sudo chown 1000:1000 data
 docker compose up -d
 
 # 4. Access application
-open http://localhost:8080
+open http://localhost:8089
 ```
 
 ### Option 3: Build from Source
@@ -119,7 +119,7 @@ Edit `config.yaml` to customize. The upstream Sub2API credentials are **not** in
 
 ```yaml
 server:
-  port: 8080
+  port: 8089
   mode: release  # debug or release
 
 database:
@@ -240,7 +240,7 @@ docker build -t sub2balance:latest .
 # Run — config.yaml and .env must exist on the host
 mkdir -p data && sudo chown 1000:1000 data
 docker run -d \
-  -p 8080:8080 \
+  -p 8089:8089 \
   --user 1000:1000 \
   --env-file .env \
   -v "$(pwd)/data:/app/data" \

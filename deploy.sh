@@ -126,7 +126,7 @@ fi
 echo ""
 echo "✅ Deployment complete!"
 echo ""
-echo "Access: http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo localhost):8080"
+echo "Access: http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo localhost):8089"
 
 if [ "$GENERATED_CREDS" = true ]; then
     echo ""

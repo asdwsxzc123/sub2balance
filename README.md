@@ -39,7 +39,7 @@ Sub2Balance is a secure web application that enables staff to convert Claude mon
 
 **One-line install:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/asdwsxzc123/sub2balance/main/deploy.sh | bash -s v1.0.0
+curl -fsSL https://raw.githubusercontent.com/asdwsxzc123/sub2balance/master/deploy.sh | bash -s v1.0.0
 ```
 
 **Manual download:**

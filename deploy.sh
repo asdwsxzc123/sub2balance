@@ -36,7 +36,11 @@ echo "📥 Downloading ${ARCHIVE_NAME}..."
 
 # Download release
 DOWNLOAD_URL="${REPO_URL}/releases/download/${VERSION}/${ARCHIVE_NAME}"
-curl -L -o "${ARCHIVE_NAME}" "${DOWNLOAD_URL}"
+if ! curl -fL -o "${ARCHIVE_NAME}" "${DOWNLOAD_URL}"; then
+    echo "❌ Failed to download ${DOWNLOAD_URL}"
+    echo "   Check that release ${VERSION} exists at ${REPO_URL}/releases"
+    exit 1
+fi
 
 # Extract
 echo "📂 Extracting..."

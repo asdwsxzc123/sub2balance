@@ -59,7 +59,7 @@ set -a; source .env; set +a
 ./sub2balance-linux-amd64
 ```
 
-See [Releases](https://github.com/asdwsxzc123/sub2balance/releases) for other platforms (ARM64, macOS, Windows).
+Only `linux-amd64` binaries are published; other platforms should build from source or use Docker.
 
 ### Option 2: Using Docker
 

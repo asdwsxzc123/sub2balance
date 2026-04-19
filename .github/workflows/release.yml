@@ -60,22 +60,6 @@ jobs:
             goarch: amd64
             runner: ubuntu-latest
             archive: tar.gz
-          - goos: linux
-            goarch: arm64
-            runner: ubuntu-24.04-arm
-            archive: tar.gz
-          - goos: darwin
-            goarch: amd64
-            runner: macos-13
-            archive: tar.gz
-          - goos: darwin
-            goarch: arm64
-            runner: macos-latest
-            archive: tar.gz
-          - goos: windows
-            goarch: amd64
-            runner: windows-latest
-            archive: zip
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,8 +75,7 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
-      - name: Build binary (Unix)
-        if: matrix.goos != 'windows'
+      - name: Build binary
         env:
           CGO_ENABLED: '1'
           GOOS: ${{ matrix.goos }}
@@ -101,38 +84,17 @@ jobs:
           OUTPUT="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}"
           go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
 
-      - name: Build binary (Windows)
-        if: matrix.goos == 'windows'
-        shell: bash
-        env:
-          CGO_ENABLED: '1'
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-        run: |
-          OUTPUT="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
-          go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
-
-      - name: Package (tar.gz)
-        if: matrix.archive == 'tar.gz'
+      - name: Package
         run: |
           BINARY="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}"
           tar czf "${BINARY}.tar.gz" "$BINARY" config.yaml.example .env.example README.md
-
-      - name: Package (zip)
-        if: matrix.archive == 'zip'
-        shell: bash
-        run: |
-          BINARY="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
-          7z a "sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$BINARY" config.yaml.example .env.example README.md
 
       - name: Upload archive
         uses: actions/upload-artifact@v4
         with:
           name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            sub2balance-*.tar.gz
-            sub2balance-*.zip
-          if-no-files-found: ignore
+          path: sub2balance-*.tar.gz
+          if-no-files-found: error
 
   release:
     name: Publish release
@@ -146,14 +108,13 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
-        run: sha256sum sub2balance-*.tar.gz sub2balance-*.zip > checksums.txt
+        run: sha256sum sub2balance-*.tar.gz > checksums.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             sub2balance-*.tar.gz
-            sub2balance-*.zip
             checksums.txt
           generate_release_notes: true
           body: |

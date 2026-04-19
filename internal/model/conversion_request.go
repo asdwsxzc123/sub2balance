@@ -7,6 +7,7 @@ import (
 
 type ConversionRequest struct {
 	ID               uint           `gorm:"primarykey" json:"id"`
+	RequestType      string         `gorm:"not null;default:balance;index;check:request_type IN ('balance','switch')" json:"request_type"`
 	UserEmail        string         `gorm:"not null;index" json:"user_email"`
 	Sub2APIUserID    int64          `gorm:"not null" json:"sub2api_user_id"`
 	SubscriptionID   int64          `gorm:"not null" json:"subscription_id"`
@@ -15,6 +16,9 @@ type ConversionRequest struct {
 	ConsumedAmount   float64        `gorm:"not null" json:"consumed_amount"`
 	ConversionAmount float64        `gorm:"not null" json:"conversion_amount"`
 	FinalAmount      *float64       `json:"final_amount"`
+	TargetGroupID    *int64         `json:"target_group_id"`
+	TargetGroupName  *string        `json:"target_group_name"`
+	ValidityDays     *int           `json:"validity_days"`
 	Status           string         `gorm:"not null;index;check:status IN ('pending', 'approved', 'rejected')" json:"status"`
 	SubmittedBy      uint           `gorm:"not null;index" json:"submitted_by"`
 	SubmittedByUser  *User          `gorm:"foreignKey:SubmittedBy" json:"submitted_by_user,omitempty"`

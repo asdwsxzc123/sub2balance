@@ -1,22 +1,22 @@
-version: '3.8'
-
 services:
   sub2balance:
-    build: .
+    # Production: GHCR image pushed by .github/workflows/docker.yml.
+    # Override via env, e.g. SUB2BALANCE_IMAGE=ghcr.io/asdwsxzc123/sub2balance:v1.2.3
+    image: ${SUB2BALANCE_IMAGE:-ghcr.io/asdwsxzc123/sub2balance:latest}
+    # For local development, comment out `image:` above and uncomment:
+    # build: .
     container_name: sub2balance
+    # Container runs as UID 1000. The bind-mounted ./data must be writable by
+    # that UID — either `chown 1000:1000 ./data` on the host, or override with
+    # SUB2BALANCE_UID / SUB2BALANCE_GID in .env to match your host user.
+    user: "${SUB2BALANCE_UID:-1000}:${SUB2BALANCE_GID:-1000}"
     ports:
       - "8080:8080"
-    environment:
-      - JWT_SECRET=${JWT_SECRET}
-      - SUB2API_URL=${SUB2API_URL}
-      - SUB2API_API_KEY=${SUB2API_API_KEY}
+    env_file:
+      - .env
     volumes:
       - ./data:/app/data
-      - ./config.yaml:/app/config.yaml
+      # config.yaml must exist on the host before `docker compose up`.
+      # Run once: cp config.yaml.example config.yaml  (and edit as needed)
+      - ./config.yaml:/app/config.yaml:ro
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s

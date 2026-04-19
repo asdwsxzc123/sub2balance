@@ -5,128 +5,182 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
-  build:
-    name: Build and Release
+  # Build the React frontend once and share it with every platform build via
+  # artifact, since main.go embeds frontend/dist at compile time.
+  build-frontend:
+    name: Build frontend
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm build
+
+      - name: Upload frontend dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 1
+
+  # sqlite requires CGO, so every target must build on a native runner with a
+  # matching C toolchain. Cross-compiling from a single linux host would quietly
+  # break sqlite at runtime.
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: build-frontend
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            runner: macos-13
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            archive: zip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.25'
 
-      - name: Build binaries
+      - name: Download frontend dist
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+      - name: Build binary (Unix)
+        if: matrix.goos != 'windows'
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: |
-          # Linux AMD64
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o sub2balance-linux-amd64
+          OUTPUT="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}"
+          go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
 
-          # Linux ARM64
-          GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o sub2balance-linux-arm64
-
-          # macOS AMD64
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o sub2balance-darwin-amd64
-
-          # macOS ARM64 (Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o sub2balance-darwin-arm64
-
-          # Windows AMD64
-          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o sub2balance-windows-amd64.exe
-
-      - name: Create release archives
+      - name: Build binary (Windows)
+        if: matrix.goos == 'windows'
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: |
-          # Linux AMD64
-          tar czf sub2balance-linux-amd64.tar.gz sub2balance-linux-amd64 config.yaml .env.example README.md
+          OUTPUT="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+          go build -trimpath -ldflags="-s -w" -o "$OUTPUT" .
 
-          # Linux ARM64
-          tar czf sub2balance-linux-arm64.tar.gz sub2balance-linux-arm64 config.yaml .env.example README.md
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          BINARY="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}"
+          tar czf "${BINARY}.tar.gz" "$BINARY" config.yaml.example .env.example README.md
 
-          # macOS AMD64
-          tar czf sub2balance-darwin-amd64.tar.gz sub2balance-darwin-amd64 config.yaml .env.example README.md
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        shell: bash
+        run: |
+          BINARY="sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}.exe"
+          7z a "sub2balance-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$BINARY" config.yaml.example .env.example README.md
 
-          # macOS ARM64
-          tar czf sub2balance-darwin-arm64.tar.gz sub2balance-darwin-arm64 config.yaml .env.example README.md
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            sub2balance-*.tar.gz
+            sub2balance-*.zip
+          if-no-files-found: ignore
 
-          # Windows AMD64
-          zip sub2balance-windows-amd64.zip sub2balance-windows-amd64.exe config.yaml .env.example README.md
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifact-*
+          merge-multiple: true
 
       - name: Generate checksums
-        run: |
-          sha256sum sub2balance-*.tar.gz sub2balance-*.zip > checksums.txt
+        run: sha256sum sub2balance-*.tar.gz sub2balance-*.zip > checksums.txt
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Create release
+        uses: softprops/action-gh-release@v2
         with:
           files: |
-            sub2balance-linux-amd64.tar.gz
-            sub2balance-linux-arm64.tar.gz
-            sub2balance-darwin-amd64.tar.gz
-            sub2balance-darwin-arm64.tar.gz
-            sub2balance-windows-amd64.zip
+            sub2balance-*.tar.gz
+            sub2balance-*.zip
             checksums.txt
+          generate_release_notes: true
           body: |
-            ## Installation
+            ## Docker (recommended)
 
-            Download the appropriate binary for your platform:
-
-            **Linux (AMD64):**
             ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-linux-amd64.tar.gz
+            docker pull ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ```
+
+            See `docker-compose.yml` in the repo for a full example.
+
+            ## Standalone binary
+
+            Each archive contains the binary plus `config.yaml.example`, `.env.example`, and `README.md`.
+
+            ```bash
+            # Linux AMD64 example
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-linux-amd64.tar.gz
             tar xzf sub2balance-linux-amd64.tar.gz
-            chmod +x sub2balance-linux-amd64
+            cp config.yaml.example config.yaml
+            cp .env.example .env
+            # edit .env to set JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+            ./sub2balance-linux-amd64
             ```
-
-            **Linux (ARM64):**
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-linux-arm64.tar.gz
-            tar xzf sub2balance-linux-arm64.tar.gz
-            chmod +x sub2balance-linux-arm64
-            ```
-
-            **macOS (Intel):**
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-darwin-amd64.tar.gz
-            tar xzf sub2balance-darwin-amd64.tar.gz
-            chmod +x sub2balance-darwin-amd64
-            ```
-
-            **macOS (Apple Silicon):**
-            ```bash
-            wget https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/sub2balance-darwin-arm64.tar.gz
-            tar xzf sub2balance-darwin-arm64.tar.gz
-            chmod +x sub2balance-darwin-arm64
-            ```
-
-            **Windows:**
-            Download `sub2balance-windows-amd64.zip` and extract.
-
-            ## Quick Start
-
-            1. Copy `.env.example` to `.env` and configure:
-               ```bash
-               cp .env.example .env
-               nano .env
-               ```
-
-            2. Set required environment variables:
-               - `JWT_SECRET` - Your JWT signing key
-               - `SUB2API_URL` - Your Sub2API service URL
-               - `SUB2API_API_KEY` - Your Sub2API admin API key
-
-            3. Run the binary:
-               ```bash
-               ./sub2balance-linux-amd64
-               ```
-
-            4. Access at http://localhost:8080
-
-            Default admin credentials:
-            - Email: `admin@sub2balance.local`
-            - Password: `admin123`
 
             ## Verify checksums
+
             ```bash
             sha256sum -c checksums.txt
             ```

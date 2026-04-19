@@ -6,6 +6,22 @@ Internal tool for converting Claude monthly subscriptions to balance with approv
 
 Sub2Balance is a secure web application that enables staff to convert Claude monthly subscriptions into account balance through an approval-based workflow. The system integrates with sub2api for subscription management and provides comprehensive audit logging.
 
+## 默认登录账号 / Default Login Credentials
+
+首次启动时,如果数据库中没有任何用户,系统会根据 `config.yaml` 中 `admin` 段自动创建一个管理员账号:
+
+| 字段 | 默认值 |
+| --- | --- |
+| Email | `admin@sub2balance.local` |
+| Password | `admin123` |
+
+> ⚠️ **强烈建议首次登录后立即修改密码**(顶部导航 → 修改密码)。
+>
+> - 只有当 `users` 表为空时,`config.yaml` 里的 `admin.email` / `admin.password` 才会被用来创建初始账号;之后修改 config.yaml 不会影响已有账号。
+> - 想用其它邮箱/密码作为初始账号:删掉 `data/sub2balance.db` 后,改好 `config.yaml` 再启动即可。
+
+登录后,管理员需要到 **系统设置** 页面 (`/admin/settings`) 配置 Sub2API 的 `Base URL` 和 `API Key` — 这两项已不再放在 `config.yaml`,而是保存在数据库里,可随时在网页上修改。
+
 ## Features
 
 - **Subscription Query**: Staff can search and view subscription details before conversion
@@ -23,98 +39,88 @@ Sub2Balance is a secure web application that enables staff to convert Claude mon
 
 **One-line install:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/sub2balance/main/deploy.sh | bash -s v1.0.0
+curl -fsSL https://raw.githubusercontent.com/asdwsxzc123/sub2balance/main/deploy.sh | bash -s v1.0.0
 ```
 
 **Manual download:**
 ```bash
 # Linux AMD64
-wget https://github.com/YOUR_USERNAME/sub2balance/releases/latest/download/sub2balance-linux-amd64.tar.gz
+wget https://github.com/asdwsxzc123/sub2balance/releases/latest/download/sub2balance-linux-amd64.tar.gz
 tar xzf sub2balance-linux-amd64.tar.gz
 chmod +x sub2balance-linux-amd64
 
 # Configure
+cp config.yaml.example config.yaml
 cp .env.example .env
-nano .env  # Set JWT_SECRET, SUB2API_URL, SUB2API_API_KEY
+nano .env  # Set JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
 
 # Run
+set -a; source .env; set +a
 ./sub2balance-linux-amd64
 ```
 
-See [Releases](https://github.com/YOUR_USERNAME/sub2balance/releases) for other platforms (ARM64, macOS, Windows).
+See [Releases](https://github.com/asdwsxzc123/sub2balance/releases) for other platforms (ARM64, macOS, Windows).
 
 ### Option 2: Using Docker
 
 ```bash
-# 1. Clone and configure
+# 1. Prepare config files
+cp config.yaml.example config.yaml
 cp .env.example .env
-# Edit .env with your credentials
+# Edit .env — set JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
 
-# 2. Start services
-docker-compose up -d
+# 2. Create data directory with correct ownership (container runs as UID 1000)
+mkdir -p data && sudo chown 1000:1000 data
+# Or, to reuse your own UID, set SUB2BALANCE_UID / SUB2BALANCE_GID in .env
 
-# 3. Access application
+# 3. Start services
+docker compose up -d
+
+# 4. Access application
 open http://localhost:8080
 ```
 
 ### Option 3: Build from Source
 
 ```bash
-# 1. Prerequisites: Go 1.23+, SQLite3
+# 1. Prerequisites: Go 1.25+, Node 20+, pnpm 9+, a C compiler (for sqlite CGO)
 
 # 2. Clone and configure
-git clone https://github.com/YOUR_USERNAME/sub2balance.git
+git clone https://github.com/asdwsxzc123/sub2balance.git
 cd sub2balance
+cp config.yaml.example config.yaml
 cp .env.example .env
 nano .env  # Configure required variables
 
-# 3. Build and run
-go build -o sub2balance
+# 3. Build frontend (embedded into the Go binary)
+cd frontend && pnpm install --frozen-lockfile && pnpm build && cd ..
+
+# 4. Build and run
+CGO_ENABLED=1 go build -o sub2balance .
+set -a; source .env; set +a
 ./sub2balance
 ```
 
-**Default admin credentials:** `admin@sub2balance.local` / `admin123`
+**Bootstrap admin credentials:** the first run reads `ADMIN_EMAIL` / `ADMIN_PASSWORD` from `.env` and creates that user in the `users` table. Subsequent runs ignore these values — manage users from the admin UI.
 
-**Important:** Change the admin password after first login!
+**Important:** Change the admin password after first login. Then go to `/admin/settings` to configure the Sub2API upstream (`Base URL` + `API Key`).
 
 ### Required Environment Variables
 
-```bash
-JWT_SECRET="your-secret-key-min-32-chars"
-export SUB2API_URL="https://your-sub2api.com"
-export SUB2API_API_KEY="admin-xxxxx"
-
-# 4. Build and run
-go build -o sub2balance cmd/server/main.go
-./sub2balance
-
-# 5. Access
-open http://localhost:8080
-```
-
-## Configuration
-
-### Environment Variables
-
-Required environment variables:
-
-- `JWT_SECRET`: Secret key for JWT token signing (minimum 32 characters)
-- `SUB2API_URL`: Base URL of your sub2api instance
-- `SUB2API_API_KEY`: Admin API key for sub2api (must have admin privileges)
-
-Optional:
-
-- `PORT`: Server port (default: 8080)
-- `GIN_MODE`: Gin mode - `debug` or `release` (default: release)
+| Variable | Purpose |
+| --- | --- |
+| `JWT_SECRET` | JWT signing key (generate: `openssl rand -hex 32`). Rotating invalidates all sessions. |
+| `ADMIN_EMAIL` | Bootstrap admin email. Only used when the users table is empty. |
+| `ADMIN_PASSWORD` | Bootstrap admin password. Only used when the users table is empty. |
 
 ### Configuration File
 
-Edit `config.yaml` to customize:
+Edit `config.yaml` to customize. The upstream Sub2API credentials are **not** in this file — they live in the database and are managed via `/admin/settings`.
 
 ```yaml
 server:
   port: 8080
-  mode: release
+  mode: release  # debug or release
 
 database:
   path: ./data/sub2balance.db
@@ -124,8 +130,6 @@ jwt:
   expire_hours: 24
 
 sub2api:
-  base_url: ${SUB2API_URL}
-  api_key: ${SUB2API_API_KEY}
   timeout_seconds: 30
   max_retries: 3
 
@@ -134,6 +138,10 @@ security:
   rate_limit:
     enabled: true
     requests_per_minute: 60
+
+admin:
+  email: ${ADMIN_EMAIL}
+  password: ${ADMIN_PASSWORD}
 ```
 
 ## Usage
@@ -183,26 +191,26 @@ security:
 ### Build from Source
 
 ```bash
-# Install dependencies
+# Install Go dependencies
 go mod download
 
+# Build frontend (once, or whenever frontend/ changes)
+cd frontend && pnpm install --frozen-lockfile && pnpm build && cd ..
+
 # Build binary
-go build -o sub2balance cmd/server/main.go
+CGO_ENABLED=1 go build -o sub2balance .
 
 # Run tests
 go test ./...
-
-# Run with hot reload (requires air)
-air
 ```
+
+For frontend-only iteration, run `pnpm dev` inside `frontend/` and point it at a running backend.
 
 ### Project Structure
 
 ```
 sub2balance/
-├── cmd/
-│   └── server/
-│       └── main.go          # Application entry point
+├── main.go                  # Application entry point (embeds frontend/dist)
 ├── internal/
 │   ├── config/              # Configuration management
 │   ├── handler/             # HTTP handlers
@@ -210,13 +218,12 @@ sub2balance/
 │   ├── model/               # Database models
 │   ├── repository/          # Data access layer
 │   └── service/             # Business logic
-├── web/                     # Frontend assets (embedded)
-│   ├── assets/
-│   ├── index.html
-│   ├── login.html
-│   └── ...
-├── config.yaml              # Configuration file
-├── Dockerfile               # Container image
+├── frontend/                # React + Vite + Tailwind source
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
+├── config.yaml              # Configuration file (copied from .example)
+├── Dockerfile               # Multi-stage container build
 └── docker-compose.yml       # Docker compose setup
 ```
 
@@ -224,17 +231,20 @@ sub2balance/
 
 ### Docker Deployment
 
+For most cases, pull the GHCR image via `docker compose` (see Quick Start Option 2). To build locally:
+
 ```bash
-# Build image
+# Build image (multi-stage: frontend + Go binary + alpine runtime)
 docker build -t sub2balance:latest .
 
-# Run container
+# Run — config.yaml and .env must exist on the host
+mkdir -p data && sudo chown 1000:1000 data
 docker run -d \
   -p 8080:8080 \
-  -v $(pwd)/data:/app/data \
-  -e JWT_SECRET="your-secret" \
-  -e SUB2API_URL="https://api.example.com" \
-  -e SUB2API_API_KEY="admin-key" \
+  --user 1000:1000 \
+  --env-file .env \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/config.yaml:/app/config.yaml:ro" \
   sub2balance:latest
 ```
 
@@ -266,9 +276,9 @@ docker run -d \
 ### Common Issues
 
 **Cannot connect to sub2api**
-- Verify SUB2API_URL is correct and accessible
-- Check API key has admin privileges
-- Review network/firewall settings
+- Log in as admin and verify Base URL / API Key at `/admin/settings`
+- Use the `Test` button on that page to probe connectivity
+- Check API key has admin privileges and review network/firewall settings
 
 **Login fails**
 - Verify JWT_SECRET is set and consistent
@@ -305,10 +315,10 @@ Application logs include:
 ## Tech Stack
 
 - **Backend**: Go 1.25+ with Gin web framework
-- **Database**: SQLite with GORM ORM
-- **Frontend**: Alpine.js + TailwindCSS
+- **Database**: SQLite with GORM ORM (CGO-linked via mattn/go-sqlite3)
+- **Frontend**: React 18 + Vite + TailwindCSS, embedded into the Go binary via `//go:embed`
 - **Authentication**: JWT with golang-jwt/jwt
-- **Deployment**: Docker + Docker Compose
+- **Deployment**: Docker + Docker Compose, or single-binary releases
 
 ## License
 

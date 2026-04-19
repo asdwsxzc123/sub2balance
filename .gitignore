@@ -33,3 +33,16 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Environment
+.env
+
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Personal / workspace files (not part of the app)
+.claude/
+demo.yaml
+install-codex.sh

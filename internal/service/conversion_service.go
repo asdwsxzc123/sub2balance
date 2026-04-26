@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/yourusername/sub2balance/internal/model"
@@ -206,9 +207,39 @@ func (s *ConversionService) QueryByEmail(ctx context.Context, email string) (*Qu
 		return nil, fmt.Errorf("failed to find user: %w", err)
 	}
 
-	results := make([]*QuerySubscriptionResult, 0, len(user.Subscriptions))
+	// The user-search list endpoint returns embedded subscriptions without usage data
+	// (daily/weekly/monthly_usage_usd = 0). Fetch each subscription individually to
+	// get accurate usage so conversion_amount is not incorrectly inflated.
+	type indexed struct {
+		i   int
+		sub *Sub2APISubscription
+	}
+	ch := make(chan indexed, len(user.Subscriptions))
+	var wg sync.WaitGroup
 	for i := range user.Subscriptions {
-		results = append(results, s.buildQueryResult(ctx, user, &user.Subscriptions[i]))
+		wg.Add(1)
+		go func(i int, embedded Sub2APISubscription) {
+			defer wg.Done()
+			full, err := s.sub2apiClient.GetSubscription(ctx, embedded.ID)
+			if err != nil {
+				// Fall back to embedded data if the individual fetch fails.
+				ch <- indexed{i, &embedded}
+				return
+			}
+			ch <- indexed{i, full}
+		}(i, user.Subscriptions[i])
+	}
+	wg.Wait()
+	close(ch)
+
+	subs := make([]*Sub2APISubscription, len(user.Subscriptions))
+	for item := range ch {
+		subs[item.i] = item.sub
+	}
+
+	results := make([]*QuerySubscriptionResult, 0, len(subs))
+	for _, sub := range subs {
+		results = append(results, s.buildQueryResult(ctx, user, sub))
 	}
 
 	// Strip embedded subscriptions from the user payload to keep the response focused.

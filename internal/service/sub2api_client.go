@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,9 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrUpstreamUserNotFound indicates no exact email match in the upstream user search.
+var ErrUpstreamUserNotFound = errors.New("upstream user not found")
 
 type Sub2APIClient struct {
 	settings   *SettingsService
@@ -39,6 +43,13 @@ func (c *Sub2APIClient) credentials() (baseURL, apiKey string, err error) {
 type Sub2APIUser struct {
 	ID            int64                 `json:"id"`
 	Email         string                `json:"email"`
+	Username      string                `json:"username"`
+	Role          string                `json:"role"`
+	Notes         string                `json:"notes"`
+	Concurrency   int                   `json:"concurrency"`
+	RPMLimit      int                   `json:"rpm_limit"`
+	Status        string                `json:"status"`
+	CreatedAt     string                `json:"created_at"`
 	Balance       float64               `json:"balance"`
 	Subscriptions []Sub2APISubscription `json:"subscriptions,omitempty"`
 }
@@ -104,7 +115,7 @@ func (c *Sub2APIClient) SearchUserByEmail(ctx context.Context, email string) (*S
 			return &list.Items[i], nil
 		}
 	}
-	return nil, fmt.Errorf("no user found for email %q", email)
+	return nil, fmt.Errorf("%w: no user found for email %q", ErrUpstreamUserNotFound, email)
 }
 
 func (c *Sub2APIClient) GetUser(ctx context.Context, userID int64) (*Sub2APIUser, error) {
@@ -161,6 +172,29 @@ func (c *Sub2APIClient) AddBalance(ctx context.Context, userID int64, amount flo
 	return c.doRequest(ctx, "POST", endpoint, body, nil)
 }
 
+// UpdateUserPassword resets a user's password via the upstream full-update endpoint.
+// The upstream PUT replaces the whole user record, so all existing fields must be
+// sent back unchanged to avoid wiping the user's configuration.
+func (c *Sub2APIClient) UpdateUserPassword(ctx context.Context, user *Sub2APIUser, newPassword string) error {
+	baseURL, _, err := c.credentials()
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/admin/users/%d", baseURL, user.ID)
+
+	body := map[string]interface{}{
+		"email":       user.Email,
+		"username":    user.Username,
+		"notes":       user.Notes,
+		"role":        user.Role,
+		"concurrency": user.Concurrency,
+		"rpm_limit":   user.RPMLimit,
+		"password":    newPassword,
+	}
+
+	return c.doRequest(ctx, "PUT", endpoint, body, nil)
+}
+
 func (c *Sub2APIClient) CancelSubscription(ctx context.Context, subscriptionID int64) error {
 	baseURL, _, err := c.credentials()
 	if err != nil {
@@ -176,7 +210,7 @@ func (c *Sub2APIClient) ListGroups(ctx context.Context) ([]Sub2APIGroup, error) 
 		return nil, err
 	}
 	endpoint := fmt.Sprintf(
-		"%s/api/v1/admin/groups?page=1&page_size=100&is_exclusive=true&sort_by=sort_order&sort_order=asc",
+		"%s/api/v1/admin/groups?page=1&page_size=100&sort_by=sort_order&sort_order=asc",
 		baseURL,
 	)
 
@@ -234,19 +268,25 @@ func (c *Sub2APIClient) doRequest(ctx context.Context, method, endpoint string, 
 	if err != nil {
 		return err
 	}
-	var reqBody io.Reader
+	var bodyData []byte
 	if body != nil {
-		data, err := json.Marshal(body)
+		bodyData, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
-		reqBody = bytes.NewReader(data)
 	}
 
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			time.Sleep(time.Second * time.Duration(attempt))
+		}
+
+		// Build a fresh body reader per attempt: a shared reader is exhausted
+		// after the first attempt, making every retry send an empty body.
+		var reqBody io.Reader
+		if bodyData != nil {
+			reqBody = bytes.NewReader(bodyData)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, endpoint, reqBody)

@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"time"
+
 	"github.com/yourusername/sub2balance/internal/model"
 	"gorm.io/gorm"
 )
@@ -32,5 +34,14 @@ func (r *AuditRepository) List(ctx context.Context, limit, offset int) ([]*model
 func (r *AuditRepository) Count(ctx context.Context) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.AuditLog{}).Count(&count).Error
+	return count, err
+}
+
+func (r *AuditRepository) CountByUserActionSince(ctx context.Context, userID uint, action string, since time.Time) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.AuditLog{}).
+		Where("user_id = ? AND action = ? AND created_at >= ?", userID, action, since).
+		Count(&count).Error
 	return count, err
 }

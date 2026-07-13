@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/yourusername/sub2balance/internal/model"
 	"github.com/yourusername/sub2balance/internal/repository"
@@ -66,4 +67,8 @@ func (s *AuditService) List(ctx context.Context, page, pageSize int) ([]*model.A
 
 func (s *AuditService) ListLogs(ctx context.Context, limit, offset int) ([]*model.AuditLog, error) {
 	return s.auditRepo.List(ctx, limit, offset)
+}
+
+func (s *AuditService) CountByUserActionSince(ctx context.Context, userID uint, action string, since time.Time) (int64, error) {
+	return s.auditRepo.CountByUserActionSince(ctx, userID, action, since)
 }

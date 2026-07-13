@@ -1,9 +1,17 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -44,6 +52,7 @@ function remainingDays(expiresAt?: string): number {
 
 export default function CreateRequestPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [email, setEmail] = useState('');
   const [user, setUser] = useState<Sub2APIUser | null>(null);
   const [subscriptions, setSubscriptions] = useState<QueryResult[]>([]);
@@ -55,6 +64,12 @@ export default function CreateRequestPage() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [unbindTarget, setUnbindTarget] = useState<QueryResult | null>(null);
+  const [unbinding, setUnbinding] = useState(false);
+  const [bindOpen, setBindOpen] = useState(false);
+  const [bindGroupId, setBindGroupId] = useState('');
+  const [bindDays, setBindDays] = useState('30');
+  const [binding, setBinding] = useState(false);
 
   const parsedOverride = originalOverride === '' ? NaN : parseFloat(originalOverride);
   const effectiveOriginal =
@@ -87,6 +102,14 @@ export default function CreateRequestPage() {
     (g) => String(g.id) === targetGroupId,
   );
 
+  const bindGroupsQuery = useQuery({
+    queryKey: ['groups', 'all'],
+    queryFn: () => api.get<AvailableGroup[]>('/groups'),
+    enabled: bindOpen,
+  });
+  const bindGroups = bindGroupsQuery.data ?? [];
+  const selectedBindGroup = bindGroups.find((g) => String(g.id) === bindGroupId);
+
   const handleSearch = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -109,6 +132,73 @@ export default function CreateRequestPage() {
       setError(err instanceof Error ? err.message : '查询用户失败');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const openBindDialog = () => {
+    setBindGroupId('');
+    setBindDays('30');
+    setBindOpen(true);
+  };
+
+  const handleUnbind = async () => {
+    if (!unbindTarget) return;
+    setUnbinding(true);
+    try {
+      await api.post<ConversionRequest>('/conversions', {
+        request_type: 'unbind',
+        user_email: unbindTarget.user_email,
+        sub2api_user_id: unbindTarget.sub2api_user_id,
+        subscription_id: unbindTarget.subscription_id,
+        group_name: unbindTarget.group_name,
+        original_amount: 0,
+        consumed_amount: 0,
+        conversion_amount: 0,
+      });
+      toast.success('已提交，等待管理员审批');
+      setUnbindTarget(null);
+      queryClient.invalidateQueries({ queryKey: ['my-requests'] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '提交申请失败');
+    } finally {
+      setUnbinding(false);
+    }
+  };
+
+  const handleBind = async () => {
+    if (!user) return;
+    if (!bindGroupId || !selectedBindGroup) {
+      toast.error('请选择套餐组');
+      return;
+    }
+    const days = parseInt(bindDays, 10);
+    if (!Number.isInteger(days) || days <= 0) {
+      toast.error('时长天数必须为正整数');
+      return;
+    }
+
+    setBinding(true);
+    try {
+      await api.post<ConversionRequest>('/conversions', {
+        request_type: 'bind',
+        user_email: user.email,
+        sub2api_user_id: user.id,
+        subscription_id: 0,
+        group_name: '',
+        original_amount: 0,
+        consumed_amount: 0,
+        conversion_amount: 0,
+        target_group_id: selectedBindGroup.id,
+        target_group_name: selectedBindGroup.name,
+        validity_days: days,
+      });
+      toast.success('已提交，等待管理员审批');
+      setBindOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['my-requests'] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '提交申请失败');
+    } finally {
+      setBinding(false);
     }
   };
 
@@ -221,8 +311,11 @@ export default function CreateRequestPage() {
 
       {user && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle>客户信息</CardTitle>
+            <Button variant="outline" size="sm" onClick={openBindDialog}>
+              绑定新套餐（需审批）
+            </Button>
           </CardHeader>
           <CardContent>
             <dl className="grid gap-2 text-sm sm:grid-cols-3">
@@ -244,11 +337,18 @@ export default function CreateRequestPage() {
               {subscriptions.map((sub) => {
                 const isSelected = selected?.subscription_id === sub.subscription_id;
                 return (
-                  <button
+                  <div
                     key={sub.subscription_id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     onClick={() => pickSubscription(sub)}
-                    className={`w-full rounded-md border p-4 text-left transition ${
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        pickSubscription(sub);
+                      }
+                    }}
+                    className={`w-full cursor-pointer rounded-md border p-4 text-left transition ${
                       isSelected ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
                     }`}
                   >
@@ -268,9 +368,20 @@ export default function CreateRequestPage() {
                             sub.currency,
                           )}
                         </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-2"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUnbindTarget(sub);
+                          }}
+                        >
+                          解绑（需审批）
+                        </Button>
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -454,6 +565,95 @@ export default function CreateRequestPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={!!unbindTarget} onOpenChange={(o) => !o && !unbinding && setUnbindTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>解绑套餐</DialogTitle>
+            <DialogDescription>
+              提交后需管理员审批，审批通过后将撤销该订阅，未消费额度将作废。
+            </DialogDescription>
+          </DialogHeader>
+          {unbindTarget && (
+            <div className="space-y-1 text-sm">
+              <div><span className="font-medium">用户邮箱：</span>{unbindTarget.user_email}</div>
+              <div>
+                <span className="font-medium">套餐：</span>
+                {unbindTarget.group_name || `订阅 #${unbindTarget.subscription_id}`}
+              </div>
+              <div><span className="font-medium">订阅 ID：</span>{unbindTarget.subscription_id}</div>
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setUnbindTarget(null)} disabled={unbinding}>
+              取消
+            </Button>
+            <Button variant="destructive" onClick={handleUnbind} disabled={unbinding}>
+              {unbinding ? '提交中…' : '确认解绑'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bindOpen} onOpenChange={(o) => !o && !binding && setBindOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>绑定新套餐</DialogTitle>
+            <DialogDescription>
+              为 {user?.email ?? '-'} 绑定新套餐，提交后需管理员审批。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="bind-group">套餐组</Label>
+              {bindGroupsQuery.isLoading ? (
+                <div className="text-sm text-muted-foreground">加载套餐列表中…</div>
+              ) : bindGroupsQuery.isError ? (
+                <div className="text-sm text-destructive">
+                  加载套餐失败：{bindGroupsQuery.error instanceof Error ? bindGroupsQuery.error.message : '未知错误'}
+                </div>
+              ) : bindGroups.length === 0 ? (
+                <div className="text-sm text-muted-foreground">暂无可选套餐</div>
+              ) : (
+                <Select value={bindGroupId} onValueChange={setBindGroupId}>
+                  <SelectTrigger id="bind-group">
+                    <SelectValue placeholder="请选择套餐组" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {bindGroups.map((g) => (
+                      <SelectItem key={g.id} value={String(g.id)}>
+                        {g.name}
+                        {g.platform ? `（${platformLabel(g.platform)}）` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="bind-days">时长天数</Label>
+              <Input
+                id="bind-days"
+                type="number"
+                min={1}
+                step={1}
+                value={bindDays}
+                onChange={(e) => setBindDays(e.target.value)}
+                disabled={binding}
+                placeholder="例如：30"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setBindOpen(false)} disabled={binding}>
+              取消
+            </Button>
+            <Button onClick={handleBind} disabled={binding}>
+              {binding ? '提交中…' : '提交申请'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -90,7 +90,7 @@ type AvailableGroup struct {
 }
 
 type QueryByEmailResult struct {
-	User          *Sub2APIUser              `json:"user"`
+	User          *Sub2APIUser               `json:"user"`
 	Subscriptions []*QuerySubscriptionResult `json:"subscriptions"`
 }
 
@@ -284,11 +284,14 @@ func (s *ConversionService) CreateRequest(ctx context.Context, submitterID uint,
 		"user_email":      req.UserEmail,
 		"subscription_id": req.SubscriptionID,
 	}
-	if req.RequestType == "switch" {
+	switch req.RequestType {
+	case "switch", "bind":
 		details["target_group_id"] = req.TargetGroupID
 		details["target_group_name"] = req.TargetGroupName
 		details["validity_days"] = req.ValidityDays
-	} else {
+	case "unbind":
+		details["group_name"] = req.GroupName
+	default:
 		details["conversion_amount"] = req.ConversionAmount
 	}
 	_ = s.auditService.LogWithRequest(ctx, submitterID, req.ID, "create_request", details)
@@ -389,6 +392,47 @@ func (s *ConversionService) ApproveRequest(ctx context.Context, id uint, reviewe
 			"validity_days":       *req.ValidityDays,
 			"new_subscription":    newSub.ID,
 			"note":                note,
+		}
+
+	case "unbind":
+		// Verify ownership before cancelling: a stale or tampered request must
+		// never cancel a subscription that belongs to someone else.
+		sub, err := s.sub2apiClient.GetSubscription(ctx, req.SubscriptionID)
+		if err != nil {
+			return fmt.Errorf("failed to get subscription: %w", err)
+		}
+		if sub.UserID != req.Sub2APIUserID {
+			return fmt.Errorf("订阅不属于该用户，已阻止解绑")
+		}
+
+		if err := s.sub2apiClient.CancelSubscription(ctx, req.SubscriptionID); err != nil {
+			return fmt.Errorf("failed to cancel subscription: %w", err)
+		}
+
+		auditDetails = map[string]interface{}{
+			"request_type":    "unbind",
+			"subscription_id": req.SubscriptionID,
+			"group_name":      req.GroupName,
+			"note":            note,
+		}
+
+	case "bind":
+		if req.TargetGroupID == nil || req.ValidityDays == nil {
+			return fmt.Errorf("bind request missing target_group_id or validity_days")
+		}
+
+		newSub, err := s.sub2apiClient.AssignSubscription(ctx, req.Sub2APIUserID, *req.TargetGroupID, *req.ValidityDays)
+		if err != nil {
+			return fmt.Errorf("failed to assign subscription: %w", err)
+		}
+
+		auditDetails = map[string]interface{}{
+			"request_type":      "bind",
+			"target_group_id":   *req.TargetGroupID,
+			"target_group_name": req.TargetGroupName,
+			"validity_days":     *req.ValidityDays,
+			"new_subscription":  newSub.ID,
+			"note":              note,
 		}
 
 	case "balance", "":

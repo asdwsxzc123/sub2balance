@@ -3,8 +3,9 @@ package model
 import "time"
 
 const (
-	SettingKeySub2APIBaseURL = "sub2api.base_url"
-	SettingKeySub2APIAPIKey  = "sub2api.api_key"
+	SettingKeySub2APIBaseURL          = "sub2api.base_url"
+	SettingKeySub2APIAPIKey           = "sub2api.api_key"
+	SettingKeyPasswordResetDailyLimit = "password_reset_daily_limit"
 )
 
 type SystemSetting struct {

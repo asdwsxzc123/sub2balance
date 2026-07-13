@@ -20,7 +20,7 @@ export interface LoginResponse {
 }
 
 export type ConversionStatus = 'pending' | 'approved' | 'rejected';
-export type RequestType = 'balance' | 'switch';
+export type RequestType = 'balance' | 'switch' | 'bind' | 'unbind';
 
 export interface ConversionRequest {
   id: number;
@@ -98,6 +98,28 @@ export interface Sub2APISettings {
   base_url: string;
   api_key_masked: string;
   configured: boolean;
+}
+
+export interface PasswordResetSettings {
+  daily_limit: number;
+}
+
+export interface PasswordResetAccount {
+  id: number;
+  email: string;
+  username: string;
+  status: string;
+  created_at: string;
+}
+
+export interface PasswordResetQueryResult {
+  user: PasswordResetAccount;
+}
+
+export interface PasswordResetConfirmResult {
+  email: string;
+  user_id: number;
+  new_password: string;
 }
 
 export interface AuditLog {

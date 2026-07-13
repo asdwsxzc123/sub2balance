@@ -78,6 +78,46 @@ func (h *SettingsHandler) UpdateSub2API(c *gin.Context) {
 	h.GetSub2API(c)
 }
 
+type passwordResetSettingsResponse struct {
+	DailyLimit int `json:"daily_limit"`
+}
+
+type updatePasswordResetSettingsRequest struct {
+	DailyLimit int `json:"daily_limit"`
+}
+
+// GET /api/admin/settings/password-reset
+func (h *SettingsHandler) GetPasswordReset(c *gin.Context) {
+	c.JSON(http.StatusOK, passwordResetSettingsResponse{
+		DailyLimit: h.settings.PasswordResetDailyLimit(),
+	})
+}
+
+// PUT /api/admin/settings/password-reset
+func (h *SettingsHandler) UpdatePasswordReset(c *gin.Context) {
+	var req updatePasswordResetSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式不正确"})
+		return
+	}
+	if req.DailyLimit < 1 || req.DailyLimit > 1000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "daily_limit 必须在 1 到 1000 之间"})
+		return
+	}
+
+	actorID, _ := middleware.GetUserID(c)
+	if err := h.settings.UpdatePasswordResetDailyLimit(c.Request.Context(), req.DailyLimit, actorID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	_ = h.audit.Log(c.Request.Context(), actorID, "update_password_reset_settings", map[string]any{
+		"daily_limit": req.DailyLimit,
+	})
+
+	c.JSON(http.StatusOK, passwordResetSettingsResponse{DailyLimit: req.DailyLimit})
+}
+
 // POST /api/admin/settings/sub2api/test
 // Tests connectivity with provided credentials (or current stored ones if body empty).
 func (h *SettingsHandler) TestSub2API(c *gin.Context) {

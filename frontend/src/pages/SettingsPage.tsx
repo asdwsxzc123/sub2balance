@@ -6,10 +6,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-import { api } from '@/lib/api';
+import { api, getPasswordResetSettings, updatePasswordResetSettings } from '@/lib/api';
 import type { Sub2APISettings } from '@/types/api';
 
+const DAILY_LIMIT_MIN = 1;
+const DAILY_LIMIT_MAX = 1000;
+
 export default function SettingsPage() {
+  return (
+    <div className="space-y-6">
+      <Sub2ApiSettingsCard />
+      <PasswordResetSettingsCard />
+    </div>
+  );
+}
+
+function Sub2ApiSettingsCard() {
   const queryClient = useQueryClient();
   const [baseURL, setBaseURL] = useState('');
   const [apiKey, setAPIKey] = useState('');
@@ -129,6 +141,82 @@ export default function SettingsPage() {
             <p className="pt-2 text-xs text-muted-foreground">
               API Key 只在保存时传输，加载页面时永远返回掩码形式。服务重启后仍会从数据库读取,无需再填 config.yaml。
             </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PasswordResetSettingsCard() {
+  const queryClient = useQueryClient();
+  const [dailyLimit, setDailyLimit] = useState('');
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['admin-settings-password-reset'],
+    queryFn: getPasswordResetSettings,
+  });
+
+  useEffect(() => {
+    if (data) setDailyLimit(String(data.daily_limit));
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => updatePasswordResetSettings(Number(dailyLimit)),
+    onSuccess: (res) => {
+      toast.success('已保存');
+      setDailyLimit(String(res.daily_limit));
+      queryClient.invalidateQueries({ queryKey: ['admin-settings-password-reset'] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : '保存失败'),
+  });
+
+  const handleSave = () => {
+    const value = Number(dailyLimit);
+    if (!Number.isInteger(value) || value < DAILY_LIMIT_MIN || value > DAILY_LIMIT_MAX) {
+      toast.error(`每日限额必须是 ${DAILY_LIMIT_MIN}-${DAILY_LIMIT_MAX} 的整数`);
+      return;
+    }
+    saveMutation.mutate();
+  };
+
+  return (
+    <Card className="max-w-2xl">
+      <CardHeader>
+        <CardTitle>密码重置设置</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="py-8 text-center text-muted-foreground">加载中…</div>
+        ) : error ? (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            加载失败：{error instanceof Error ? error.message : '未知错误'}
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="password-reset-daily-limit">每日重置限额</Label>
+              <Input
+                id="password-reset-daily-limit"
+                type="number"
+                min={DAILY_LIMIT_MIN}
+                max={DAILY_LIMIT_MAX}
+                step={1}
+                value={dailyLimit}
+                onChange={(e) => setDailyLimit(e.target.value)}
+                disabled={saveMutation.isPending}
+                className="max-w-[10rem]"
+              />
+              <p className="text-xs text-muted-foreground">
+                每位员工每天最多可重置的密码次数，默认 5 次。
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <Button onClick={handleSave} disabled={saveMutation.isPending}>
+                {saveMutation.isPending ? '保存中…' : '保存'}
+              </Button>
+            </div>
           </div>
         )}
       </CardContent>

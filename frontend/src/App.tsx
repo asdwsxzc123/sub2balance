@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import LoginPage from '@/pages/LoginPage';
 import CreateRequestPage from '@/pages/CreateRequestPage';
 import MyRequestsPage from '@/pages/MyRequestsPage';
+import PasswordResetPage from '@/pages/PasswordResetPage';
 import AdminDashboardPage from '@/pages/AdminDashboardPage';
 import PendingApprovalsPage from '@/pages/PendingApprovalsPage';
 import AllRequestsPage from '@/pages/AllRequestsPage';
@@ -32,6 +33,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route path="/requests/new" element={<CreateRequestPage />} />
           <Route path="/requests/my" element={<MyRequestsPage />} />
+          <Route path="/password-reset" element={<PasswordResetPage />} />
         </Route>
       </Route>
 

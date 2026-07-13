@@ -32,7 +32,7 @@ type CreateRequestBody struct {
 	RequestType      string  `json:"request_type"`
 	UserEmail        string  `json:"user_email" binding:"required,email"`
 	Sub2APIUserID    int64   `json:"sub2api_user_id" binding:"required"`
-	SubscriptionID   int64   `json:"subscription_id" binding:"required"`
+	SubscriptionID   int64   `json:"subscription_id"`
 	GroupName        string  `json:"group_name"`
 	OriginalAmount   float64 `json:"original_amount" binding:"gte=0"`
 	ConsumedAmount   float64 `json:"consumed_amount" binding:"gte=0"`
@@ -90,6 +90,10 @@ func (h *ConversionHandler) CreateRequest(c *gin.Context) {
 
 	switch requestType {
 	case "switch":
+		if req.SubscriptionID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription_id is required for switch"})
+			return
+		}
 		if req.TargetGroupID == nil || *req.TargetGroupID <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "target_group_id is required for switch"})
 			return
@@ -103,8 +107,38 @@ func (h *ConversionHandler) CreateRequest(c *gin.Context) {
 			return
 		}
 	case "balance":
+		if req.SubscriptionID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription_id is required for balance"})
+			return
+		}
 		if req.ConversionAmount <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "conversion_amount must be greater than 0"})
+			return
+		}
+	case "unbind":
+		if req.SubscriptionID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription_id is required for unbind"})
+			return
+		}
+		if req.GroupName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "解绑申请必须提供订阅组名称（group_name）"})
+			return
+		}
+	case "bind":
+		if req.SubscriptionID != 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription_id must be 0 for bind"})
+			return
+		}
+		if req.TargetGroupID == nil || *req.TargetGroupID <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target_group_id is required for bind"})
+			return
+		}
+		if req.TargetGroupName == nil || *req.TargetGroupName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "target_group_name is required for bind"})
+			return
+		}
+		if req.ValidityDays == nil || *req.ValidityDays <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "validity_days must be greater than 0"})
 			return
 		}
 	default:

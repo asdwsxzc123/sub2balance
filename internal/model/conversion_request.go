@@ -1,13 +1,13 @@
 package model
 
 import (
-	"time"
 	"gorm.io/gorm"
+	"time"
 )
 
 type ConversionRequest struct {
 	ID               uint           `gorm:"primarykey" json:"id"`
-	RequestType      string         `gorm:"not null;default:balance;index;check:request_type IN ('balance','switch')" json:"request_type"`
+	RequestType      string         `gorm:"not null;default:balance;index;check:request_type IN ('balance','switch','bind','unbind')" json:"request_type"`
 	UserEmail        string         `gorm:"not null;index" json:"user_email"`
 	Sub2APIUserID    int64          `gorm:"not null" json:"sub2api_user_id"`
 	SubscriptionID   int64          `gorm:"not null" json:"subscription_id"`

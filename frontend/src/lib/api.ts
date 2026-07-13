@@ -1,3 +1,9 @@
+import type {
+  PasswordResetConfirmResult,
+  PasswordResetQueryResult,
+  PasswordResetSettings,
+} from '@/types/api';
+
 const API_BASE = '/api';
 
 export class ApiError extends Error {
@@ -28,8 +34,8 @@ async function request<T>(method: string, endpoint: string, body?: unknown): Pro
 
   if (!res.ok) {
     const message = (payload && typeof payload === 'object' && 'error' in payload ? String(payload.error) : null)
-      ?? res.statusText
-      ?? `HTTP ${res.status}`;
+      || res.statusText
+      || `HTTP ${res.status}`;
     throw new ApiError(message, res.status);
   }
 
@@ -42,3 +48,21 @@ export const api = {
   put: <T>(endpoint: string, body?: unknown) => request<T>('PUT', endpoint, body),
   delete: <T>(endpoint: string) => request<T>('DELETE', endpoint),
 };
+
+export function passwordResetQuery(email: string) {
+  return api.post<PasswordResetQueryResult>('/password-reset/query', { email });
+}
+
+export function passwordResetConfirm(email: string) {
+  return api.post<PasswordResetConfirmResult>('/password-reset', { email });
+}
+
+export function getPasswordResetSettings() {
+  return api.get<PasswordResetSettings>('/admin/settings/password-reset');
+}
+
+export function updatePasswordResetSettings(dailyLimit: number) {
+  return api.put<PasswordResetSettings>('/admin/settings/password-reset', {
+    daily_limit: dailyLimit,
+  });
+}

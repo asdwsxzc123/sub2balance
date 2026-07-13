@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { StatusBadge } from '@/components/StatusBadge';
+import { RequestTypeBadge, requestDetailText } from '@/components/RequestTypeBadge';
 import { RequestDetailDialog } from '@/components/RequestDetailDialog';
 import { api } from '@/lib/api';
-import { formatAmount, formatDate } from '@/lib/utils';
+import { formatDate } from '@/lib/utils';
 import type { ConversionRequest } from '@/types/api';
 
 export default function MyRequestsPage() {
@@ -59,19 +59,11 @@ export default function MyRequestsPage() {
                   <TableRow key={req.id}>
                     <TableCell>{req.id}</TableCell>
                     <TableCell>
-                      {req.request_type === 'switch' ? (
-                        <Badge>切换套餐</Badge>
-                      ) : (
-                        <Badge variant="secondary">转按量</Badge>
-                      )}
+                      <RequestTypeBadge type={req.request_type} />
                     </TableCell>
                     <TableCell>{req.user_email}</TableCell>
-                    <TableCell>{req.group_name}</TableCell>
-                    <TableCell>
-                      {req.request_type === 'switch'
-                        ? `→ ${req.target_group_name ?? '-'} · ${req.validity_days ?? '-'} 天`
-                        : formatAmount(req.final_amount ?? req.conversion_amount)}
-                    </TableCell>
+                    <TableCell>{req.group_name || '-'}</TableCell>
+                    <TableCell>{requestDetailText(req, { preferFinal: true })}</TableCell>
                     <TableCell><StatusBadge status={req.status} /></TableCell>
                     <TableCell className="text-muted-foreground">{formatDate(req.created_at)}</TableCell>
                     <TableCell>

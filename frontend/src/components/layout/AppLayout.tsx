@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 const STAFF_LINKS = [
   { to: '/requests/new', label: '创建申请' },
   { to: '/requests/my', label: '我的申请' },
+  { to: '/password-reset', label: '密码重置' },
 ];
 
 const ADMIN_LINKS = [
@@ -21,6 +22,7 @@ const ADMIN_LINKS = [
   { to: '/admin/settings', label: '系统设置' },
   { to: '/requests/new', label: '创建申请' },
   { to: '/requests/my', label: '我的申请' },
+  { to: '/password-reset', label: '密码重置' },
 ];
 
 export function AppLayout() {

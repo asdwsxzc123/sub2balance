@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { RequestTypeBadge, requestDetailText } from '@/components/RequestTypeBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -27,7 +27,7 @@ export default function PendingApprovalsPage() {
   const approveMutation = useMutation({
     mutationFn: async (request: ConversionRequest) => {
       const body: { note: string; final_amount?: number } = { note };
-      if (request.request_type !== 'switch' && finalAmount) {
+      if (request.request_type === 'balance' && finalAmount) {
         body.final_amount = parseFloat(finalAmount);
       }
       return api.put(`/admin/conversions/${request.id}/approve`, body);
@@ -88,7 +88,7 @@ export default function PendingApprovalsPage() {
   const effectiveAmount =
     reviewing && !Number.isNaN(finalAmountNum) ? finalAmountNum : reviewing?.conversion_amount ?? 0;
 
-  const isSwitch = reviewing?.request_type === 'switch';
+  const reviewingType = reviewing?.request_type;
 
   return (
     <>
@@ -120,19 +120,11 @@ export default function PendingApprovalsPage() {
                   <TableRow key={req.id}>
                     <TableCell>{req.id}</TableCell>
                     <TableCell>
-                      {req.request_type === 'switch' ? (
-                        <Badge>切换套餐</Badge>
-                      ) : (
-                        <Badge variant="secondary">转按量</Badge>
-                      )}
+                      <RequestTypeBadge type={req.request_type} />
                     </TableCell>
                     <TableCell>{req.user_email}</TableCell>
-                    <TableCell>{req.group_name}</TableCell>
-                    <TableCell>
-                      {req.request_type === 'switch'
-                        ? `→ ${req.target_group_name ?? '-'} · ${req.validity_days ?? '-'} 天`
-                        : formatAmount(req.conversion_amount)}
-                    </TableCell>
+                    <TableCell>{req.group_name || '-'}</TableCell>
+                    <TableCell>{requestDetailText(req)}</TableCell>
                     <TableCell>{req.submitted_by_user?.email ?? '-'}</TableCell>
                     <TableCell className="text-muted-foreground">{formatDate(req.created_at)}</TableCell>
                     <TableCell>
@@ -153,9 +145,9 @@ export default function PendingApprovalsPage() {
           </DialogHeader>
           {reviewing && (
             <div className="space-y-4 text-sm">
-              {isSwitch ? (
+              {reviewingType === 'switch' ? (
                 <div className="space-y-1">
-                  <div><span className="font-medium">类型：</span>切换套餐</div>
+                  <div><span className="font-medium">类型：</span>套餐转换</div>
                   <div><span className="font-medium">用户邮箱：</span>{reviewing.user_email}</div>
                   <div><span className="font-medium">当前套餐：</span>{reviewing.group_name}</div>
                   <div>
@@ -170,10 +162,41 @@ export default function PendingApprovalsPage() {
                     审批通过后将为该用户订阅目标套餐并撤销当前套餐，当前套餐未消费额度将作废。
                   </div>
                 </div>
+              ) : reviewingType === 'bind' ? (
+                <div className="space-y-1">
+                  <div><span className="font-medium">类型：</span>绑定套餐</div>
+                  <div><span className="font-medium">用户邮箱：</span>{reviewing.user_email}</div>
+                  <div>
+                    <span className="font-medium">目标套餐：</span>
+                    <span className="font-semibold">{reviewing.target_group_name ?? '-'}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium">时长天数：</span>
+                    <span className="font-semibold">{reviewing.validity_days ?? '-'}</span>
+                  </div>
+                  <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    审批通过后将为该用户绑定目标套餐（按指定天数生效）。
+                  </div>
+                </div>
+              ) : reviewingType === 'unbind' ? (
+                <div className="space-y-1">
+                  <div><span className="font-medium">类型：</span>解绑套餐</div>
+                  <div><span className="font-medium">用户邮箱：</span>{reviewing.user_email}</div>
+                  <div>
+                    <span className="font-medium">套餐：</span>
+                    <span className="font-semibold">
+                      {reviewing.group_name || `订阅 #${reviewing.subscription_id}`}
+                    </span>
+                  </div>
+                  <div><span className="font-medium">订阅 ID：</span>{reviewing.subscription_id}</div>
+                  <div className="mt-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                    审批通过后将撤销该订阅，未消费额度将作废。
+                  </div>
+                </div>
               ) : (
                 <>
                   <div className="space-y-1">
-                    <div><span className="font-medium">类型：</span>转按量</div>
+                    <div><span className="font-medium">类型：</span>余额转换</div>
                     <div><span className="font-medium">用户邮箱：</span>{reviewing.user_email}</div>
                     <div><span className="font-medium">分组：</span>{reviewing.group_name}</div>
                     <div><span className="font-medium">原始金额：</span>{formatAmount(reviewing.original_amount)}</div>

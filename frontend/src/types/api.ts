@@ -122,6 +122,28 @@ export interface PasswordResetConfirmResult {
   new_password: string;
 }
 
+export interface SystemVersion {
+  version: string;
+  os: string;
+  arch: string;
+  in_container: boolean;
+}
+
+export interface SystemLatest {
+  current_version: string;
+  latest_version: string;
+  has_update: boolean;
+  published_at: string;
+  release_notes: string;
+  asset_ready: boolean;
+}
+
+export interface UpgradeResult {
+  status: string;
+  from: string;
+  to: string;
+}
+
 export interface AuditLog {
   id: number;
   request_id: number | null;

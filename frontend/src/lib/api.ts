@@ -2,6 +2,9 @@ import type {
   PasswordResetConfirmResult,
   PasswordResetQueryResult,
   PasswordResetSettings,
+  SystemLatest,
+  SystemVersion,
+  UpgradeResult,
 } from '@/types/api';
 
 const API_BASE = '/api';
@@ -65,4 +68,16 @@ export function updatePasswordResetSettings(dailyLimit: number) {
   return api.put<PasswordResetSettings>('/admin/settings/password-reset', {
     daily_limit: dailyLimit,
   });
+}
+
+export function getSystemVersion() {
+  return api.get<SystemVersion>('/admin/system/version');
+}
+
+export function getSystemLatest() {
+  return api.get<SystemLatest>('/admin/system/latest');
+}
+
+export function triggerSystemUpgrade(version = '') {
+  return api.post<UpgradeResult>('/admin/system/upgrade', { version });
 }

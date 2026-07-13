@@ -3,11 +3,26 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
-import { api, getPasswordResetSettings, updatePasswordResetSettings } from '@/lib/api';
-import type { Sub2APISettings } from '@/types/api';
+import {
+  api,
+  getPasswordResetSettings,
+  getSystemLatest,
+  getSystemVersion,
+  triggerSystemUpgrade,
+  updatePasswordResetSettings,
+} from '@/lib/api';
+import type { Sub2APISettings, SystemLatest } from '@/types/api';
 
 const DAILY_LIMIT_MIN = 1;
 const DAILY_LIMIT_MAX = 1000;
@@ -17,6 +32,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <Sub2ApiSettingsCard />
       <PasswordResetSettingsCard />
+      <SystemUpgradeCard />
     </div>
   );
 }
@@ -220,6 +236,243 @@ function PasswordResetSettingsCard() {
           </div>
         )}
       </CardContent>
+    </Card>
+  );
+}
+
+const UPGRADE_POLL_INTERVAL_MS = 3_000;
+const UPGRADE_TIMEOUT_MS = 120_000;
+
+function normalizeVersion(version: string): string {
+  return version.trim().replace(/^v/i, '');
+}
+
+function formatPublishedAt(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function SystemUpgradeCard() {
+  const queryClient = useQueryClient();
+  const [latest, setLatest] = useState<SystemLatest | null>(null);
+  const [checkError, setCheckError] = useState('');
+  const [upgradeError, setUpgradeError] = useState('');
+  const [isConfirmOpen, setConfirmOpen] = useState(false);
+  const [upgradeTarget, setUpgradeTarget] = useState<string | null>(null);
+  const [isTimedOut, setTimedOut] = useState(false);
+
+  const isUpgrading = upgradeTarget !== null;
+
+  const { data: version, isLoading, error } = useQuery({
+    queryKey: ['admin-system-version'],
+    queryFn: getSystemVersion,
+    enabled: !isUpgrading,
+  });
+
+  const checkMutation = useMutation({
+    mutationFn: getSystemLatest,
+    onSuccess: (res) => {
+      setLatest(res);
+      setCheckError('');
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '检查更新失败';
+      setLatest(null);
+      setCheckError(message);
+      toast.error(message);
+    },
+  });
+
+  const upgradeMutation = useMutation({
+    mutationFn: (targetVersion: string) => triggerSystemUpgrade(targetVersion),
+    onSuccess: (res) => {
+      setConfirmOpen(false);
+      setUpgradeError('');
+      setTimedOut(false);
+      setUpgradeTarget(res.to);
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '升级请求失败';
+      setConfirmOpen(false);
+      setUpgradeError(message);
+      toast.error(message);
+    },
+  });
+
+  useEffect(() => {
+    if (!upgradeTarget) return;
+
+    let isCancelled = false;
+    const startedAt = Date.now();
+
+    const timer = setInterval(async () => {
+      if (Date.now() - startedAt > UPGRADE_TIMEOUT_MS) {
+        clearInterval(timer);
+        setUpgradeTarget(null);
+        setTimedOut(true);
+        return;
+      }
+      try {
+        const current = await getSystemVersion();
+        if (isCancelled) return;
+        if (normalizeVersion(current.version) === normalizeVersion(upgradeTarget)) {
+          clearInterval(timer);
+          setUpgradeTarget(null);
+          setLatest(null);
+          toast.success(`已升级到 ${current.version}`);
+          queryClient.invalidateQueries({ queryKey: ['admin-system-version'] });
+        }
+      } catch {
+        // 重启期间 401 / 网络错误均属预期，静默重试
+      }
+    }, UPGRADE_POLL_INTERVAL_MS);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(timer);
+    };
+  }, [upgradeTarget, queryClient]);
+
+  const handleCheck = () => {
+    setUpgradeError('');
+    setTimedOut(false);
+    checkMutation.mutate();
+  };
+
+  const canUpgrade = Boolean(
+    latest?.has_update && latest.asset_ready && !version?.in_container,
+  );
+  const isUpToDate = Boolean(latest && !latest.has_update);
+  const inlineError = checkError || upgradeError;
+
+  return (
+    <Card className="max-w-2xl">
+      <CardHeader>
+        <CardTitle>系统升级</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading && !isUpgrading ? (
+          <div className="py-8 text-center text-muted-foreground">加载中…</div>
+        ) : error && !isUpgrading ? (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            加载失败：{error instanceof Error ? error.message : '未知错误'}
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">当前版本：</span>
+              <span className="font-mono font-medium">{version?.version ?? '未知'}</span>
+              {version && (
+                <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  {version.os}/{version.arch}
+                </span>
+              )}
+            </div>
+
+            {version?.in_container && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                当前为容器部署，请通过拉取新镜像升级。
+              </div>
+            )}
+
+            {isUpgrading ? (
+              <div className="space-y-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-3 text-sm text-blue-700">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
+                  <span>正在升级到 {upgradeTarget}…</span>
+                </div>
+                <p className="text-xs">
+                  服务正在下载新版本并重启，期间约 10-20 秒不可用，页面会自动检测恢复，请勿关闭页面。
+                </p>
+              </div>
+            ) : (
+              <>
+                {isTimedOut && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                    升级可能失败，请检查服务器日志（journalctl -u sub2balance）
+                  </div>
+                )}
+
+                {inlineError && (
+                  <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {inlineError}
+                  </div>
+                )}
+
+                {latest && (
+                  <div className="space-y-3 rounded-md border px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">最新版本：</span>
+                      <span className="font-mono font-medium">{latest.latest_version}</span>
+                      {isUpToDate && (
+                        <span className="rounded-md bg-green-100 px-2 py-0.5 text-xs text-green-700">
+                          当前已是最新版本
+                        </span>
+                      )}
+                      {latest.has_update && !latest.asset_ready && (
+                        <span className="rounded-md bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
+                          安装包尚未就绪，请稍后再试
+                        </span>
+                      )}
+                    </div>
+                    {latest.published_at && (
+                      <p className="text-xs text-muted-foreground">
+                        发布时间：{formatPublishedAt(latest.published_at)}
+                      </p>
+                    )}
+                    {latest.release_notes && (
+                      <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-relaxed">
+                        {latest.release_notes}
+                      </pre>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={handleCheck}
+                    disabled={checkMutation.isPending}
+                  >
+                    {checkMutation.isPending ? '检查中…' : '检查更新'}
+                  </Button>
+                  {canUpgrade && latest && (
+                    <Button onClick={() => setConfirmOpen(true)}>
+                      升级到 {latest.latest_version}
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </CardContent>
+
+      <Dialog open={isConfirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确认升级到 {latest?.latest_version}？</DialogTitle>
+            <DialogDescription>
+              服务将自动下载新版本并重启，期间约 10-20 秒不可用，页面会自动检测恢复。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+              disabled={upgradeMutation.isPending}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={() => upgradeMutation.mutate(latest?.latest_version ?? '')}
+              disabled={upgradeMutation.isPending}
+            >
+              {upgradeMutation.isPending ? '提交中…' : '确认升级'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

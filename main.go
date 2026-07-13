@@ -27,7 +27,17 @@ import (
 //go:embed all:frontend/dist
 var webFS embed.FS
 
+// version is injected at build time via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
+	// Handle --version before anything else (must not depend on config.yaml):
+	// the self-upgrade flow runs "{new binary} --version" as a sanity check.
+	if len(os.Args) > 1 && os.Args[1] == "--version" {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
 	// Load configuration
 	cfg, err := config.Load("config.yaml")
 	if err != nil {
@@ -68,6 +78,7 @@ func main() {
 	convService := service.NewConversionService(convRepo, groupPriceRepo, sub2apiClient, auditService)
 	groupPriceService := service.NewGroupPriceService(groupPriceRepo, sub2apiClient, auditService)
 	passwordResetService := service.NewPasswordResetService(sub2apiClient, auditService, settingsService)
+	upgradeService := service.NewUpgradeService(version, auditService)
 
 	// Initialize handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -77,6 +88,7 @@ func main() {
 	groupPriceHandler := handler.NewGroupPriceHandler(groupPriceService)
 	settingsHandler := handler.NewSettingsHandler(settingsService, sub2apiClient, auditService)
 	passwordResetHandler := handler.NewPasswordResetHandler(passwordResetService)
+	upgradeHandler := handler.NewUpgradeHandler(upgradeService)
 
 	// Setup router
 	r := gin.Default()
@@ -165,6 +177,11 @@ func main() {
 			// System settings (password reset daily limit)
 			admin.GET("/settings/password-reset", settingsHandler.GetPasswordReset)
 			admin.PUT("/settings/password-reset", settingsHandler.UpdatePasswordReset)
+
+			// System version & self-upgrade
+			admin.GET("/system/version", upgradeHandler.GetVersion)
+			admin.GET("/system/latest", upgradeHandler.GetLatest)
+			admin.POST("/system/upgrade", upgradeHandler.Upgrade)
 		}
 	}
 

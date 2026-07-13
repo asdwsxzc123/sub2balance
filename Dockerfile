@@ -24,8 +24,9 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
+ARG VERSION=dev
 ENV CGO_ENABLED=1
-RUN go build -trimpath -ldflags="-s -w" -o /out/sub2balance main.go
+RUN go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/sub2balance main.go
 
 # ---------- Stage 3: runtime ----------
 FROM alpine:3.20
